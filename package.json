@@ -1,0 +1,22 @@
+{
+  "name": "dclm-osun-2",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "icecast": "node local_icecast_server.js",
+    "deploy": "npm run build && node tools/deploy.js",
+    "deploy:vercel": "npm run build && npx vercel --prod"
+  },
+  "devDependencies": {
+    "netlify-cli": "^26.1.0",
+    "vite": "^8.0.12"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.108.1",
+    "ws": "^8.21.0"
+  }
+}
