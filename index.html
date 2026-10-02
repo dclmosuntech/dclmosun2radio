@@ -1356,14 +1356,14 @@
                     const liveStatusBanner = document.getElementById("radio-live-status-banner");
                     if (!player) return;
                     
-                    const isLive = player.currentPlayingTrackId === 'live';
+                    const isLive = Boolean(window._liveAudioSettings?.audioUrl && window._liveAudioSettings?.audioUrl.trim().length > 0 && window._liveAudioSettings?.isLive);
                     
                     if (liveStatusBanner) {
-                        liveStatusBanner.style.display = 'flex';
                         const icon = liveStatusBanner.querySelector('i');
                         const text = liveStatusBanner.querySelector('span');
                         
                         if (isLive) {
+                            liveStatusBanner.style.display = 'flex';
                             if (player && !player.paused) {
                                 // Active LIVE broadcast streaming ongoing: turn into red beeping pulse dot with text "LIVE"
                                 if (icon) icon.className = "fa-solid fa-circle live-beeping-pulse-dot";
@@ -1380,21 +1380,16 @@
                                 liveStatusBanner.style.color = "#c084fc";
                             }
                         } else {
-                            // Standard media files/archive playback
-                            if (icon) icon.className = "fa-solid fa-circle-check";
-                            if (text) text.textContent = "AUDIO PLAYBACK ACTIVE";
-                            
+                            // Offline or 24/7 playlist playback
                             if (player && !player.paused) {
-                                // Playing state styling (more active cyan glow highlights)
+                                liveStatusBanner.style.display = 'flex';
                                 liveStatusBanner.style.background = "rgba(56, 189, 248, 0.12)";
                                 liveStatusBanner.style.borderColor = "rgba(56, 189, 248, 0.4)";
                                 liveStatusBanner.style.color = "#38bdf8";
                                 if (icon) icon.className = "fa-solid fa-circle-check fa-fade";
+                                if (text) text.textContent = "24/7 GOSPEL RADIO ACTIVE";
                             } else {
-                                // Paused/stopped state styling
-                                liveStatusBanner.style.background = "rgba(56, 189, 248, 0.08)";
-                                liveStatusBanner.style.borderColor = "rgba(56, 189, 248, 0.25)";
-                                liveStatusBanner.style.color = "#38bdf8";
+                                liveStatusBanner.style.display = 'none';
                             }
                         }
                     }

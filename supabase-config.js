@@ -743,7 +743,7 @@ window.isLiveStreamUrl = isLiveStreamUrl;
 
 function applyAudioSettingsUI(value) {
     window._liveAudioSettings = value || { audioUrl: '', isLive: false };
-    const isLive = Boolean(value?.audioUrl && value?.audioUrl.trim().length > 0 && value?.isLive !== false);
+    const isLive = Boolean(value?.audioUrl && value?.audioUrl.trim().length > 0 && value?.isLive === true);
     
     // Update live banner in radio UI
     const liveStatusBanner = document.getElementById("radio-live-status-banner");
@@ -758,7 +758,7 @@ function applyAudioSettingsUI(value) {
     
     const player = document.getElementById("global-radio-player");
     const currentSrc = player ? (player.src || player.originalSrc || '') : '';
-        const isCurrentlyLiveUrl = isLiveStreamUrl(currentSrc);
+    const isCurrentlyLiveUrl = isLiveStreamUrl(currentSrc);
 
     // If live stream went offline AND player is attached to live stream: force socket abort & switch to 24/7 playlist
     if (!isLive && isCurrentlyLiveUrl) {
@@ -778,9 +778,10 @@ function applyAudioSettingsUI(value) {
         const cleanLiveUrl = liveUrl.split('?')[0];
         const isAlreadyPlayingThisLive = currentSrc.includes(cleanLiveUrl) && !player.paused;
 
-        // If user is actively listening and NOT yet on this exact live stream, switch immediately:
-        if (!isAlreadyPlayingThisLive && (window.isAudioPlaying || (player && !player.paused))) {
-            console.log("[DCLM Radio] 🔴 Live broadcast started! Seamlessly transitioning active listener to live stream:", liveUrl);
+        // If user is actively listening to RADIO and NOT yet on this exact live stream, switch immediately:
+        const isRadioMode = player?.playbackMode === 'radio' || window.currentPlaybackMode === 'radio' || !player?.playbackMode;
+        if (!isAlreadyPlayingThisLive && (window.isAudioPlaying || (player && !player.paused)) && isRadioMode) {
+            console.log("[DCLM Radio] 🔴 Live broadcast started! Seamlessly transitioning active radio listener to live stream:", liveUrl);
             if (window.playAudioStream) {
                 window.playAudioStream(liveUrl, value.title || "DCLM OSUN II LIVE BROADCAST", value.speaker || "Osun State HQ Pulpit", 'live');
             } else if (window.syncPlayerWithGlobalBroadcast) {
@@ -801,8 +802,13 @@ setInterval(() => {
     const player = document.getElementById("global-radio-player");
     if (!player) return;
 
+    // Do NOT interrupt on-demand Library resource playback!
+    if (window.currentPlaybackMode === 'library' || player.playbackMode === 'library') {
+        return;
+    }
+
     const liveAudio = window._liveAudioSettings;
-    const isLive = Boolean(liveAudio?.audioUrl && liveAudio?.audioUrl.trim().length > 0 && liveAudio?.isLive !== false);
+    const isLive = Boolean(liveAudio?.audioUrl && liveAudio?.audioUrl.trim().length > 0 && liveAudio?.isLive === true);
 
     if (!isLive) {
         const currentSrc = player.src || player.originalSrc || '';
@@ -818,13 +824,14 @@ setInterval(() => {
             }
         }
     } else {
-        // Live stream is ONLINE: If user is actively listening, ensure player is attached to live stream, not 24/7 playlist!
+        // Live stream is ONLINE: If user is actively listening to radio, ensure player is attached to live stream, not 24/7 playlist!
         const liveUrl = (liveAudio.audioUrl || '').trim();
         const cleanLiveUrl = liveUrl.split('?')[0];
         const currentSrc = player.src || player.originalSrc || '';
         const isAttachedToLive = isLiveStreamUrl(currentSrc) && currentSrc.includes(cleanLiveUrl);
-        if ((window.isAudioPlaying || !player.paused) && !isAttachedToLive) {
-            console.log("[DCLM Watchdog] 🔴 Live broadcast online but player is on 24/7 track. Transitioning to live stream...");
+        const isRadioMode = player?.playbackMode === 'radio' || window.currentPlaybackMode === 'radio' || !player?.playbackMode;
+        if ((window.isAudioPlaying || !player.paused) && !isAttachedToLive && isRadioMode) {
+            console.log("[DCLM Watchdog] 🔴 Live broadcast online but radio player is on 24/7 track. Transitioning to live stream...");
             if (window.playAudioStream) {
                 window.playAudioStream(liveUrl, liveAudio.title || "DCLM OSUN II LIVE BROADCAST", liveAudio.speaker || "Osun State HQ Pulpit", 'live');
             } else if (window.syncPlayerWithGlobalBroadcast) {
@@ -1499,6 +1506,17 @@ window.playAudioStream = function(url, title, speaker, trackId) {
 
     player.currentPlayingTrackId = targetTrackId;
     window.currentPlayingTrackId = targetTrackId;
+
+    if (isLiveStream) {
+        player.playbackMode = 'live';
+        window.currentPlaybackMode = 'live';
+    } else if (targetTrackId === 'radio' || targetTrackId === '2' || targetTrackId === '3' || (window._currentRadioTracks && window._currentRadioTracks.some(t => t.id.toString() === targetTrackId.toString() && window.currentPlaybackMode === 'radio'))) {
+        player.playbackMode = 'radio';
+        window.currentPlaybackMode = 'radio';
+    } else {
+        player.playbackMode = 'library';
+        window.currentPlaybackMode = 'library';
+    }
     
     let finalUrl = url;
     if (isLiveStream) {
@@ -1577,7 +1595,7 @@ window.toggleRadioAudio = function() {
 if (!window.syncPlayerWithGlobalBroadcast || window.syncPlayerWithGlobalBroadcast._isFallback) {
     window.syncPlayerWithGlobalBroadcast = function(autoPlay = false) {
         const liveAudio = window._liveAudioSettings;
-        const isLive = Boolean(liveAudio?.audioUrl && liveAudio?.audioUrl.trim().length > 0 && liveAudio?.isLive !== false);
+        const isLive = Boolean(liveAudio?.audioUrl && liveAudio?.audioUrl.trim().length > 0 && liveAudio?.isLive === true);
 
         if (isLive) {
             updateAllPlayerLabels(liveAudio.title, liveAudio.speaker || 'LIVE BROADCAST');
@@ -2676,7 +2694,7 @@ window.switchAdminTask = function(task) {
         const currentUrl = window._liveAudioSettings?.audioUrl || '';
         const currentAnnounce = window._liveAudioSettings?.announcement || '';
         const currentTitle = window._liveAudioSettings?.title || 'DCLM OSUN II LIVE SANCTUARY BROADCAST';
-        const isLive = Boolean(currentUrl && window._liveAudioSettings?.isLive !== false);
+        const isLive = Boolean(currentUrl && window._liveAudioSettings?.isLive === true);
         
         canvas.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">

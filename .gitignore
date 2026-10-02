@@ -23,8 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 
-# Local Netlify & Vercel folders
-.netlify
+# Local Vercel folders
 .vercel
 
 # Environment variables
@@ -42,3 +41,5 @@ tools/stream_url.txt
 # Temporary scratch scripts
 scratch_*.js
 
+
+.vercel

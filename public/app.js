@@ -598,9 +598,19 @@ function playAudioStream(url, title, subtext, trackId = "") {
     // Always destroy any previous HLS audio instance before loading a new source
     destroyRadioHls();
 
-    // Detect HLS stream (.m3u8) — use HLS.js for compatibility
     const isHlsStream = url && url.toLowerCase().includes('.m3u8');
     const isLiveStream = trackId === 'live' || (window.isLiveStreamUrl && window.isLiveStreamUrl(url));
+
+    if (isLiveStream) {
+        player.playbackMode = 'live';
+        window.currentPlaybackMode = 'live';
+    } else if (trackId === 'radio' || trackId === '2' || trackId === '3' || (window._currentRadioTracks && window._currentRadioTracks.some(t => t.id.toString() === trackId.toString() && window.currentPlaybackMode === 'radio'))) {
+        player.playbackMode = 'radio';
+        window.currentPlaybackMode = 'radio';
+    } else {
+        player.playbackMode = 'library';
+        window.currentPlaybackMode = 'library';
+    }
 
     if (isHlsStream && typeof Hls !== 'undefined') {
         if (Hls.isSupported()) {
@@ -862,7 +872,7 @@ function handleAudioEnded() {
     // If currently on live stream, do NOT cycle tracks
     if (currentPlayingTrackId === 'live' || window.currentPlayingTrackId === 'live') {
         console.warn("[Radio] Live stream ended or connection closed.");
-        const isLiveOnline = Boolean(window._liveAudioSettings?.audioUrl && window._liveAudioSettings?.audioUrl.trim().length > 0 && window._liveAudioSettings?.isLive !== false);
+        const isLiveOnline = Boolean(window._liveAudioSettings?.audioUrl && window._liveAudioSettings?.audioUrl.trim().length > 0 && window._liveAudioSettings?.isLive === true);
         if (!isLiveOnline && window.syncPlayerWithGlobalBroadcast) {
             window.currentPlayingTrackId = null;
             window.syncPlayerWithGlobalBroadcast(window.isAudioPlaying);
@@ -1243,7 +1253,7 @@ window.preloadRadioAudioInBackground = function() {
     
     // Check if live stream is online
     const liveUrl = (window._liveAudioSettings?.audioUrl || "").trim();
-    const isLive = Boolean(liveUrl && window._liveAudioSettings?.isLive !== false);
+    const isLive = Boolean(liveUrl && window._liveAudioSettings?.isLive === true);
     
     let targetUrl = '';
     let targetTitle = '';
@@ -1311,7 +1321,7 @@ if (document.readyState === "loading") {
 window.syncPlayerWithGlobalBroadcast = function(forcePlay = false) {
     // Check if an active Live Audio Stream is configured and active
     let liveUrl = (window._liveAudioSettings?.audioUrl || "").trim();
-    let isLiveAudioOnline = Boolean(liveUrl && window._liveAudioSettings?.isLive !== false);
+    let isLiveAudioOnline = Boolean(liveUrl && window._liveAudioSettings?.isLive === true);
     
     let state = null;
     
@@ -1355,6 +1365,15 @@ window.syncPlayerWithGlobalBroadcast = function(forcePlay = false) {
                 duration: defaultTrack.duration
             };
         }
+    }
+
+    // Set lockstep playback modes
+    if (isSyncLive) {
+        player.playbackMode = 'live';
+        window.currentPlaybackMode = 'live';
+    } else {
+        player.playbackMode = 'radio';
+        window.currentPlaybackMode = 'radio';
     }
     
     window._currentRadioPlaybackState = state;
@@ -1579,17 +1598,28 @@ window._radioLockstepWatchdogInterval = setInterval(() => {
     const player = document.getElementById("global-radio-player");
     if (!player) return;
 
+    // If user is playing an on-demand Library resource or Hymn, do NOT interrupt or force radio lockstep!
+    if (window.currentPlaybackMode === 'library' || player.playbackMode === 'library') {
+        return;
+    }
+
     // If live stream is active, do not sync virtual radio
-    const isLiveOnline = Boolean(window._liveAudioSettings?.audioUrl && window._liveAudioSettings?.audioUrl.trim().length > 0 && window._liveAudioSettings?.isLive !== false);
+    const isLiveOnline = Boolean(window._liveAudioSettings?.audioUrl && window._liveAudioSettings?.audioUrl.trim().length > 0 && window._liveAudioSettings?.isLive === true);
     if (isLiveOnline) {
         // If live stream is online and player is actively playing 24/7 radio, switch immediately to live stream!
-        if ((window.isAudioPlaying || !player.paused) && player.currentPlayingTrackId !== 'live') {
+        const isRadioMode = player.playbackMode === 'radio' || window.currentPlaybackMode === 'radio' || !player.playbackMode;
+        if ((window.isAudioPlaying || !player.paused) && player.currentPlayingTrackId !== 'live' && isRadioMode) {
             console.log("[Radio Watchdog] Live stream is online. Transitioning active listener to live sanctuary feed...");
             window.syncPlayerWithGlobalBroadcast(true);
         }
         return;
     }
     if (player.currentPlayingTrackId === 'live' || window.currentPlayingTrackId === 'live') {
+        return;
+    }
+
+    // Only apply 24/7 radio lockstep if in radio mode!
+    if (player.playbackMode && player.playbackMode !== 'radio') {
         return;
     }
 
