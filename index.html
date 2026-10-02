@@ -1482,6 +1482,35 @@
                         player.addEventListener("play", updateRadioUIState);
                         player.addEventListener("pause", updateRadioUIState);
                         player.addEventListener("loadedmetadata", updateRadioUIState);
+                        player.addEventListener("waiting", () => {
+                            const radioBtn = document.getElementById("radio-play-btn");
+                            if (radioBtn) {
+                                radioBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin" style="font-size: 26px; color: #ffffff;"></i>';
+                                radioBtn.setAttribute("data-loading", "true");
+                            }
+                            const globalBtn = document.getElementById("global-play-btn");
+                            if (globalBtn) globalBtn.className = "fa-solid fa-circle-notch fa-spin play-btn";
+                        });
+                        player.addEventListener("playing", () => {
+                            updateRadioUIState();
+                            const radioBtn = document.getElementById("radio-play-btn");
+                            if (radioBtn) {
+                                radioBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
+                                radioBtn.removeAttribute("data-loading");
+                            }
+                            const globalBtn = document.getElementById("global-play-btn");
+                            if (globalBtn) globalBtn.className = "fa-solid fa-pause play-btn";
+                        });
+                        player.addEventListener("error", () => {
+                            updateRadioUIState();
+                            const radioBtn = document.getElementById("radio-play-btn");
+                            if (radioBtn) {
+                                radioBtn.innerHTML = '<i class="fa-solid fa-play" style="margin-left: 3px;"></i>';
+                                radioBtn.removeAttribute("data-loading");
+                            }
+                            const globalBtn = document.getElementById("global-play-btn");
+                            if (globalBtn) globalBtn.className = "fa-solid fa-play play-btn";
+                        });
                         player.addEventListener("volumechange", () => {
                             const slider = document.getElementById("radio-volume-slider");
                             if (slider) slider.value = player.volume * 100;

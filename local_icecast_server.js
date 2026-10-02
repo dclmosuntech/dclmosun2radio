@@ -175,10 +175,16 @@ const server = net.createServer((socket) => {
                     'HTTP/1.1 200 OK\r\n' +
                     'Content-Type: audio/mpeg\r\n' +
                     'Access-Control-Allow-Origin: *\r\n' +
+                    'Access-Control-Allow-Headers: *\r\n' +
                     'Cache-Control: no-cache, no-store, must-revalidate, max-age=0\r\n' +
                     'Pragma: no-cache\r\n' +
                     'Expires: 0\r\n' +
                     'X-Accel-Buffering: no\r\n' +
+                    'X-Content-Type-Options: nosniff\r\n' +
+                    'icy-name: DCLM OSUN 2 RADIO\r\n' +
+                    'icy-genre: Gospel\r\n' +
+                    'icy-br: 64\r\n' +
+                    'icy-pub: 1\r\n' +
                     'Connection: keep-alive\r\n\r\n'
                 );
 

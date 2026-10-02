@@ -63,31 +63,66 @@ window.currentUserState = window.currentUserState || {
 
 // ── Helper to compress profile images (Base64 under 200KB) ──
 function compressImage(file) {
+    const defaultAvatar = "https://cdn-icons-png.flaticon.com/512/1144/1144760.png";
+    if (!file) return Promise.resolve(defaultAvatar);
     return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = function (e) {
-            const img = new Image();
-            img.onload = function () {
-                const canvas = document.createElement("canvas");
-                const MAX_SIZE = 200;
-                let width = img.width;
-                let height = img.height;
+        let finished = false;
+        const timer = setTimeout(() => {
+            if (!finished) {
+                finished = true;
+                console.warn("[DCLM] Image compression timed out. Using default avatar.");
+                resolve(defaultAvatar);
+            }
+        }, 4000);
 
-                if (width > height) {
-                    if (width > MAX_SIZE) { height = Math.round(height * MAX_SIZE / width); width = MAX_SIZE; }
-                } else {
-                    if (height > MAX_SIZE) { width = Math.round(width * MAX_SIZE / height); height = MAX_SIZE; }
-                }
-
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext("2d");
-                ctx.drawImage(img, 0, 0, width, height);
-                resolve(canvas.toDataURL("image/jpeg", 0.7));
+        try {
+            const reader = new FileReader();
+            reader.onerror = function () {
+                if (finished) return;
+                finished = true;
+                clearTimeout(timer);
+                resolve(defaultAvatar);
             };
-            img.src = e.target.result;
-        };
-        reader.readAsDataURL(file);
+            reader.onload = function (e) {
+                const img = new Image();
+                img.onerror = function () {
+                    if (finished) return;
+                    finished = true;
+                    clearTimeout(timer);
+                    resolve(defaultAvatar);
+                };
+                img.onload = function () {
+                    if (finished) return;
+                    finished = true;
+                    clearTimeout(timer);
+                    try {
+                        const canvas = document.createElement("canvas");
+                        const MAX_SIZE = 200;
+                        let width = img.width || 200;
+                        let height = img.height || 200;
+
+                        if (width > height) {
+                            if (width > MAX_SIZE) { height = Math.round(height * MAX_SIZE / width); width = MAX_SIZE; }
+                        } else {
+                            if (height > MAX_SIZE) { width = Math.round(width * MAX_SIZE / height); height = MAX_SIZE; }
+                        }
+
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext("2d");
+                        ctx.drawImage(img, 0, 0, width, height);
+                        resolve(canvas.toDataURL("image/jpeg", 0.7));
+                    } catch (err) {
+                        resolve(defaultAvatar);
+                    }
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        } catch (err) {
+            clearTimeout(timer);
+            resolve(defaultAvatar);
+        }
     });
 }
 
@@ -432,23 +467,58 @@ window.showAuthOverlay = function() {
 window.handleUserSignup = async function (event) {
     event.preventDefault();
     const submitBtn = event.target.querySelector(".auth-submit-btn");
-    submitBtn.textContent = "Creating Account...";
-    submitBtn.disabled = true;
-
-    const firstName = document.getElementById("reg-firstname").value.trim();
-    const lastName = document.getElementById("reg-lastname").value.trim();
-    const phoneVal = document.getElementById("reg-phone").value.trim();
-    const region = document.getElementById("reg-region").value;
-    const group = document.getElementById("reg-group").value.trim();
-    const avatarFile = document.getElementById("reg-avatar").files[0];
-    const isRegisteringAdmin = window._currentAuthRoleSelected === 'admin';
-    const adminCodeEntered = document.getElementById("reg-admin-id").value.trim();
+    if (submitBtn) {
+        submitBtn.textContent = "Creating Account...";
+        submitBtn.disabled = true;
+    }
 
     try {
+        const firstName = (document.getElementById("reg-firstname")?.value || "").trim();
+        const lastName = (document.getElementById("reg-lastname")?.value || "").trim();
+        const region = document.getElementById("reg-region")?.value || "";
+        const group = (document.getElementById("reg-group")?.value || "").trim();
+        const avatarFile = document.getElementById("reg-avatar")?.files?.[0];
+
+        // Safe phone extraction (check hidden normalized field, then fallback to visible input)
+        const phoneInputEl = document.getElementById("reg-phone-input");
+        const hiddenPhoneEl = document.getElementById("reg-phone");
+        let phoneVal = (hiddenPhoneEl?.value || phoneInputEl?.value || "").trim();
+
+        if (!phoneVal) {
+            alert("❌ Please enter your phone number.");
+            return;
+        }
+
+        // Auto-normalize phone if user entered local format (e.g. 080... or 80...)
+        if (!phoneVal.startsWith('+')) {
+            const cleanDigits = phoneVal.replace(/\D/g, '');
+            const rawDigits = cleanDigits.startsWith('0') ? cleanDigits.substring(1) : cleanDigits;
+            phoneVal = `+234${rawDigits}`;
+        }
+
+        if (!firstName || !lastName) {
+            alert("❌ Please enter your First and Last name.");
+            return;
+        }
+
+        if (!region) {
+            alert("❌ Please select your Region in Osun State II.");
+            return;
+        }
+
+        if (!group) {
+            alert("❌ Please enter your District / Group.");
+            return;
+        }
+
         let avatarBase64 = "https://cdn-icons-png.flaticon.com/512/1144/1144760.png";
         if (avatarFile) {
             avatarBase64 = await compressImage(avatarFile);
         }
+
+        const isRegisteringAdmin = window._currentAuthRoleSelected === 'admin';
+        const adminCodeEl = document.getElementById("reg-admin-id") || document.getElementById("admin-reg-code");
+        const adminCodeEntered = adminCodeEl ? adminCodeEl.value.trim() : "";
 
         let isAdmin = false;
         let role = 'member';
@@ -456,14 +526,12 @@ window.handleUserSignup = async function (event) {
         if (isRegisteringAdmin) {
             if (!adminCodeEntered) {
                 alert("❌ Please enter the Special Admin Security ID.");
-                submitBtn.innerHTML = "Complete Registration";
-                submitBtn.disabled = false;
                 return;
             }
 
             // Validate Admin code
             let isCodeValid = false;
-            const { data, error } = await supabase.from('admin_codes').select('*').eq('code', adminCodeEntered).eq('is_valid', true).maybeSingle();
+            const { data } = await supabase.from('admin_codes').select('*').eq('code', adminCodeEntered).eq('is_valid', true).maybeSingle();
             if (data) {
                 isCodeValid = true;
                 // Mark code as used
@@ -476,15 +544,13 @@ window.handleUserSignup = async function (event) {
 
             if (!isCodeValid) {
                 alert("❌ Invalid or expired Admin Security Code. Please contact your administrator.");
-                submitBtn.innerHTML = "Complete Registration";
-                submitBtn.disabled = false;
                 return;
             }
             isAdmin = true;
             role = 'admin';
         }
 
-        const currentUid = activeSessionUserId || anonSessionId;
+        const currentUid = activeSessionUserId || anonSessionId || crypto.randomUUID();
         const profile = {
             firstName,
             lastName,
@@ -493,7 +559,8 @@ window.handleUserSignup = async function (event) {
             group,
             profileImage: avatarBase64,
             isAdmin,
-            role
+            role,
+            uid: currentUid
         };
 
         const { error: upsertError } = await supabase.from('users').upsert({
@@ -520,10 +587,12 @@ window.handleUserSignup = async function (event) {
 
     } catch (error) {
         console.error("[DCLM] Registration error:", error);
-        alert(`❌ Registration failed: ${error.message}`);
+        alert(`❌ Registration failed: ${error.message || error}`);
     } finally {
-        submitBtn.innerHTML = "Complete Registration";
-        submitBtn.disabled = false;
+        if (submitBtn) {
+            submitBtn.innerHTML = "Complete Registration";
+            submitBtn.disabled = false;
+        }
     }
 };
 
@@ -665,11 +734,10 @@ function applyVideoSettingsUI(value) {
     }
 }
 
-function isLiveStreamUrl(url, trackId) {
-    if (trackId === 'live' || window.currentPlayingTrackId === 'live') return true;
+function isLiveStreamUrl(url) {
     if (!url || typeof url !== 'string') return false;
     const lower = url.toLowerCase();
-    return lower.includes('/live') || lower.includes('lhr.life') || lower.includes(':8001') || lower.includes('icecast') || lower.includes('butt') || lower.includes('zeno.fm') || lower.includes('.m3u8');
+    return lower.includes('/live') || lower.includes('lhr.life') || lower.includes(':8001') || lower.includes(':8000') || lower.includes('icecast') || lower.includes('butt') || lower.includes('zeno.fm') || lower.includes('.m3u8') || lower.includes('trycloudflare.com') || lower.includes('cloudflare');
 }
 window.isLiveStreamUrl = isLiveStreamUrl;
 
@@ -690,7 +758,7 @@ function applyAudioSettingsUI(value) {
     
     const player = document.getElementById("global-radio-player");
     const currentSrc = player ? (player.src || player.originalSrc || '') : '';
-    const isCurrentlyLiveUrl = isLiveStreamUrl(currentSrc, player?.currentPlayingTrackId);
+        const isCurrentlyLiveUrl = isLiveStreamUrl(currentSrc);
 
     // If live stream went offline AND player is attached to live stream: force socket abort & switch to 24/7 playlist
     if (!isLive && isCurrentlyLiveUrl) {
@@ -706,11 +774,16 @@ function applyAudioSettingsUI(value) {
             window.resumeVirtualPlaylist();
         }
     } else if (isLive) {
-        // If live stream just came ONLINE and user is currently playing audio (e.g. 24/7 playlist):
-        // Automatically switch active listener directly to the live sanctuary feed!
-        if (window.isAudioPlaying || (player && !player.paused)) {
-            console.log("[DCLM Radio] 🔴 Live broadcast started! Seamlessly switching active listener to live sanctuary feed:", value.audioUrl);
-            if (window.syncPlayerWithGlobalBroadcast) {
+        const liveUrl = (value.audioUrl || '').trim();
+        const cleanLiveUrl = liveUrl.split('?')[0];
+        const isAlreadyPlayingThisLive = currentSrc.includes(cleanLiveUrl) && !player.paused;
+
+        // If user is actively listening and NOT yet on this exact live stream, switch immediately:
+        if (!isAlreadyPlayingThisLive && (window.isAudioPlaying || (player && !player.paused))) {
+            console.log("[DCLM Radio] 🔴 Live broadcast started! Seamlessly transitioning active listener to live stream:", liveUrl);
+            if (window.playAudioStream) {
+                window.playAudioStream(liveUrl, value.title || "DCLM OSUN II LIVE BROADCAST", value.speaker || "Osun State HQ Pulpit", 'live');
+            } else if (window.syncPlayerWithGlobalBroadcast) {
                 window.syncPlayerWithGlobalBroadcast(true);
             }
             return;
@@ -746,11 +819,15 @@ setInterval(() => {
         }
     } else {
         // Live stream is ONLINE: If user is actively listening, ensure player is attached to live stream, not 24/7 playlist!
+        const liveUrl = (liveAudio.audioUrl || '').trim();
+        const cleanLiveUrl = liveUrl.split('?')[0];
         const currentSrc = player.src || player.originalSrc || '';
-        const isAttachedToLive = isLiveStreamUrl(currentSrc, player.currentPlayingTrackId);
+        const isAttachedToLive = isLiveStreamUrl(currentSrc) && currentSrc.includes(cleanLiveUrl);
         if ((window.isAudioPlaying || !player.paused) && !isAttachedToLive) {
-            console.log("[DCLM Watchdog] 🔴 Live broadcast online but player is playing 24/7 track. Transitioning to live stream...");
-            if (window.syncPlayerWithGlobalBroadcast) {
+            console.log("[DCLM Watchdog] 🔴 Live broadcast online but player is on 24/7 track. Transitioning to live stream...");
+            if (window.playAudioStream) {
+                window.playAudioStream(liveUrl, liveAudio.title || "DCLM OSUN II LIVE BROADCAST", liveAudio.speaker || "Osun State HQ Pulpit", 'live');
+            } else if (window.syncPlayerWithGlobalBroadcast) {
                 window.syncPlayerWithGlobalBroadcast(true);
             }
         }
@@ -1407,44 +1484,71 @@ window.playAudioStream = function(url, title, speaker, trackId) {
 
     updateAllPlayerLabels(title, speaker);
 
-    const isLiveStream = url.includes('/live') || trackId === 'live';
+    const isLiveStream = isLiveStreamUrl(url) || trackId === 'live';
     const targetTrackId = trackId || (isLiveStream ? 'live' : 'track');
 
-    // IF ALREADY ACTIVELY PLAYING THIS STREAM, DO NOT OVERWRITE PLAYER.SRC OR INTERRUPT PLAYBACK!
-    if (player.currentPlayingTrackId === targetTrackId && !player.paused) {
-        console.log("[DCLM Audio] Active playback already in progress, keeping audio uninterrupted.");
+    // Check if ALREADY playing this exact stream URL (must verify actual src, not just ID!)
+    const cleanTarget = url.split('?')[0];
+    const currentSrc = (player.src || player.originalSrc || '').split('?')[0];
+    const isSameSource = currentSrc.includes(cleanTarget) || (window.isSameAudioSource && window.isSameAudioSource(currentSrc, cleanTarget));
+
+    if (isSameSource && !player.paused) {
+        console.log("[DCLM Audio] Active playback of this exact stream already in progress.");
         return;
     }
 
     player.currentPlayingTrackId = targetTrackId;
     window.currentPlayingTrackId = targetTrackId;
     
-    // Add cache buster timestamp query param to force fresh live HTTP connection at current instant
     let finalUrl = url;
     if (isLiveStream) {
         const cleanUrl = url.split('?')[0];
-        finalUrl = `${cleanUrl}?t=${Date.now()}`;
+        const sep = cleanUrl.includes('?') ? '&' : '?';
+        finalUrl = `${cleanUrl}${sep}_live=${Date.now()}`;
+        delete player.pendingSeekTime;
     }
 
-    if (player.src !== finalUrl) {
-        player.src = finalUrl;
-        player.load();
-    }
+    // Disconnect any ongoing playback and switch immediately
+    player.pause();
+    player.src = finalUrl;
+    player.load();
     
-    player.play().then(() => {
-        window.isAudioPlaying = true;
-        const playBtnIcon = document.getElementById("global-play-btn");
-        if (playBtnIcon) playBtnIcon.className = "fa-solid fa-pause play-btn";
-        const radioPlayBtn = document.getElementById("radio-play-btn");
-        if (radioPlayBtn) radioPlayBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
-        const playlistPlayBtn = document.getElementById("playlist-play-btn");
-        if (playlistPlayBtn) playlistPlayBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
-        const wave = document.getElementById("radio-music-wave");
-        if (wave) wave.classList.add("playing");
-        console.log("[DCLM Audio] Playing stream successfully:", finalUrl);
-    }).catch(err => {
-        console.error("[DCLM Audio] Play failed or requires user gesture:", err);
-    });
+    // Show immediate loading spinner so low-bandwidth devices have clear feedback
+    const radioPlayBtn = document.getElementById("radio-play-btn");
+    if (radioPlayBtn) {
+        radioPlayBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin" style="font-size: 26px; color: #ffffff;"></i>';
+        radioPlayBtn.setAttribute("data-loading", "true");
+    }
+    const playBtnIcon = document.getElementById("global-play-btn");
+    if (playBtnIcon) {
+        playBtnIcon.className = "fa-solid fa-circle-notch fa-spin play-btn";
+    }
+
+    const playPromise = player.play();
+    if (playPromise !== undefined) {
+        playPromise.then(() => {
+            window.isAudioPlaying = true;
+            if (playBtnIcon) playBtnIcon.className = "fa-solid fa-pause play-btn";
+            if (radioPlayBtn) {
+                radioPlayBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
+                radioPlayBtn.removeAttribute("data-loading");
+            }
+            const playlistPlayBtn = document.getElementById("playlist-play-btn");
+            if (playlistPlayBtn) playlistPlayBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
+            const wave = document.getElementById("radio-music-wave");
+            if (wave) wave.classList.add("playing");
+            console.log("[DCLM Audio] Playing stream successfully:", finalUrl);
+        }).catch(err => {
+            console.warn("[DCLM Audio] Play waiting for user gesture:", err);
+            window.isAudioPlaying = false;
+            if (radioPlayBtn) {
+                radioPlayBtn.innerHTML = '<i class="fa-solid fa-play" style="margin-left: 3px;"></i>';
+                radioPlayBtn.removeAttribute("data-loading");
+            }
+            if (playBtnIcon) playBtnIcon.className = "fa-solid fa-play play-btn";
+            if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
+        });
+    }
 };
 
 window.resumeVirtualPlaylist = function() {
@@ -2236,53 +2340,79 @@ window.setAdminGatewayMode = function(mode) {
 window.handleAdminSignup = async function (event) {
     event.preventDefault();
     const submitBtn = event.target.querySelector(".auth-submit-btn");
-    submitBtn.textContent = "Creating Admin Account...";
-    submitBtn.disabled = true;
-
-    const firstName = document.getElementById("admin-reg-firstname").value.trim();
-    const lastName = document.getElementById("admin-reg-lastname").value.trim();
-    const phoneVal = document.getElementById("admin-reg-phone").value.trim();
-    const region = document.getElementById("admin-reg-region").value;
-    const group = document.getElementById("admin-reg-group").value.trim();
-    const avatarFile = document.getElementById("admin-reg-avatar").files[0];
-    const adminCodeEntered = document.getElementById("admin-reg-code").value.trim();
+    if (submitBtn) {
+        submitBtn.textContent = "Creating Admin Account...";
+        submitBtn.disabled = true;
+    }
 
     try {
+        const firstName = (document.getElementById("admin-reg-firstname")?.value || "").trim();
+        const lastName = (document.getElementById("admin-reg-lastname")?.value || "").trim();
+        const region = document.getElementById("admin-reg-region")?.value || "";
+        const group = (document.getElementById("admin-reg-group")?.value || "").trim();
+        const avatarFile = document.getElementById("admin-reg-avatar")?.files?.[0];
+        const adminCodeEntered = (document.getElementById("admin-reg-code")?.value || "").trim();
+
+        // Safe phone extraction
+        const phoneInputEl = document.getElementById("admin-reg-phone-input");
+        const hiddenPhoneEl = document.getElementById("admin-reg-phone");
+        let phoneVal = (hiddenPhoneEl?.value || phoneInputEl?.value || "").trim();
+
+        if (!phoneVal) {
+            alert("❌ Please enter your phone number.");
+            return;
+        }
+
+        if (!phoneVal.startsWith('+')) {
+            const cleanDigits = phoneVal.replace(/\D/g, '');
+            const rawDigits = cleanDigits.startsWith('0') ? cleanDigits.substring(1) : cleanDigits;
+            phoneVal = `+234${rawDigits}`;
+        }
+
+        if (!firstName || !lastName) {
+            alert("❌ Please enter your First and Last name.");
+            return;
+        }
+
+        if (!region) {
+            alert("❌ Please select your Region in Osun State II.");
+            return;
+        }
+
+        if (!group) {
+            alert("❌ Please enter your District / Group.");
+            return;
+        }
+
+        if (!adminCodeEntered) {
+            alert("❌ Please enter the Special Admin Security ID.");
+            return;
+        }
+
         let avatarBase64 = "https://cdn-icons-png.flaticon.com/512/1144/1144760.png";
         if (avatarFile) {
             avatarBase64 = await compressImage(avatarFile);
         }
 
-        if (!adminCodeEntered) {
-            alert("❌ Please enter the Special Admin Security ID.");
-            submitBtn.textContent = "Register Admin";
-            submitBtn.disabled = false;
-            return;
-        }
-
         // Validate Admin code
         let isCodeValid = false;
-        
-            const { data, error } = await supabase.from('admin_codes').select('*').eq('code', adminCodeEntered).eq('is_valid', true).maybeSingle();
-            if (data) {
-                isCodeValid = true;
-                // Mark code as used
-                await supabase.from('admin_codes').update({
-                    is_valid: false,
-                    used_by: `${firstName} ${lastName}`,
-                    used_at: new Date().toISOString()
-                }).eq('id', data.id);
-            }
-        
+        const { data } = await supabase.from('admin_codes').select('*').eq('code', adminCodeEntered).eq('is_valid', true).maybeSingle();
+        if (data) {
+            isCodeValid = true;
+            // Mark code as used
+            await supabase.from('admin_codes').update({
+                is_valid: false,
+                used_by: `${firstName} ${lastName}`,
+                used_at: new Date().toISOString()
+            }).eq('id', data.id);
+        }
 
         if (!isCodeValid) {
             alert("❌ Invalid or expired Admin Security Code. Please contact your administrator.");
-            submitBtn.textContent = "Register Admin";
-            submitBtn.disabled = false;
             return;
         }
 
-        const currentUid = activeSessionUserId || anonSessionId;
+        const currentUid = activeSessionUserId || anonSessionId || crypto.randomUUID();
         const profile = {
             firstName,
             lastName,
@@ -2291,23 +2421,22 @@ window.handleAdminSignup = async function (event) {
             group,
             profileImage: avatarBase64,
             isAdmin: true,
-            role: 'admin'
+            role: 'admin',
+            uid: currentUid
         };
 
-        
-            const { error: upsertError } = await supabase.from('users').upsert({
-                id: currentUid,
-                first_name: firstName,
-                last_name: lastName,
-                phone: phoneVal,
-                region,
-                group_name: group,
-                profile_image: avatarBase64,
-                is_admin: true,
-                role: 'admin'
-            });
-            if (upsertError) throw upsertError;
-        
+        const { error: upsertError } = await supabase.from('users').upsert({
+            id: currentUid,
+            first_name: firstName,
+            last_name: lastName,
+            phone: phoneVal,
+            region,
+            group_name: group,
+            profile_image: avatarBase64,
+            is_admin: true,
+            role: 'admin'
+        });
+        if (upsertError) throw upsertError;
 
         localStorage.setItem('dclm_logged_in_uid', currentUid);
         activeSessionUserId = currentUid;
@@ -2320,10 +2449,12 @@ window.handleAdminSignup = async function (event) {
 
     } catch (error) {
         console.error("[DCLM] Admin registration error:", error);
-        alert(`❌ Admin registration failed: ${error.message}`);
+        alert(`❌ Admin registration failed: ${error.message || error}`);
     } finally {
-        submitBtn.textContent = "Register Admin";
-        submitBtn.disabled = false;
+        if (submitBtn) {
+            submitBtn.textContent = "Register Admin";
+            submitBtn.disabled = false;
+        }
     }
 };
 

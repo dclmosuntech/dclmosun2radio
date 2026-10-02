@@ -600,7 +600,7 @@ function playAudioStream(url, title, subtext, trackId = "") {
 
     // Detect HLS stream (.m3u8) — use HLS.js for compatibility
     const isHlsStream = url && url.toLowerCase().includes('.m3u8');
-    const isLiveStream = trackId === 'live';
+    const isLiveStream = trackId === 'live' || (window.isLiveStreamUrl && window.isLiveStreamUrl(url));
 
     if (isHlsStream && typeof Hls !== 'undefined') {
         if (Hls.isSupported()) {
