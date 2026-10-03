@@ -1492,25 +1492,22 @@ window.playAudioStream = function(url, title, speaker, trackId) {
     updateAllPlayerLabels(title, speaker);
 
     const isLiveStream = isLiveStreamUrl(url) || trackId === 'live';
+    const isRadioMode = trackId === 'radio';
     const targetTrackId = trackId || (isLiveStream ? 'live' : 'track');
 
-    // Check if ALREADY playing this exact stream URL (must verify actual src, not just ID!)
+    // Check if ALREADY playing or loaded with this exact stream URL
     const cleanTarget = url.split('?')[0];
     const currentSrc = (player.src || player.originalSrc || '').split('?')[0];
     const isSameSource = currentSrc.includes(cleanTarget) || (window.isSameAudioSource && window.isSameAudioSource(currentSrc, cleanTarget));
 
-    if (isSameSource && !player.paused) {
-        console.log("[DCLM Audio] Active playback of this exact stream already in progress.");
-        return;
-    }
-
     player.currentPlayingTrackId = targetTrackId;
     window.currentPlayingTrackId = targetTrackId;
+    player.originalSrc = url;
 
     if (isLiveStream) {
         player.playbackMode = 'live';
         window.currentPlaybackMode = 'live';
-    } else if (targetTrackId === 'radio' || targetTrackId === '2' || targetTrackId === '3' || (window._currentRadioTracks && window._currentRadioTracks.some(t => t.id.toString() === targetTrackId.toString() && window.currentPlaybackMode === 'radio'))) {
+    } else if (isRadioMode) {
         player.playbackMode = 'radio';
         window.currentPlaybackMode = 'radio';
     } else {
@@ -1518,6 +1515,28 @@ window.playAudioStream = function(url, title, speaker, trackId) {
         window.currentPlaybackMode = 'library';
     }
     
+    // If ALREADY on this exact source:
+    if (isSameSource) {
+        if (!player.paused) {
+            console.log("[DCLM Audio] Active playback of this exact stream already in progress.");
+            return;
+        }
+        // Resuming from pause on the same track: SYNCHRONOUS play keeps user gesture!
+        console.log("[DCLM Audio] Resuming playback on current track synchronously:", cleanTarget);
+        const playPromise = player.play();
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                window.isAudioPlaying = true;
+                if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
+            }).catch(err => {
+                console.warn("[DCLM Audio] Resume error:", err);
+            });
+        }
+        window.isAudioPlaying = true;
+        if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
+        return;
+    }
+
     let finalUrl = url;
     if (isLiveStream) {
         const cleanUrl = url.split('?')[0];
@@ -1526,47 +1545,23 @@ window.playAudioStream = function(url, title, speaker, trackId) {
         delete player.pendingSeekTime;
     }
 
-    // Disconnect any ongoing playback and switch immediately
-    player.pause();
+    // Switch to new source and play synchronously
     player.src = finalUrl;
-    player.load();
-    
-    // Show immediate loading spinner so low-bandwidth devices have clear feedback
-    const radioPlayBtn = document.getElementById("radio-play-btn");
-    if (radioPlayBtn) {
-        radioPlayBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin" style="font-size: 26px; color: #ffffff;"></i>';
-        radioPlayBtn.setAttribute("data-loading", "true");
-    }
-    const playBtnIcon = document.getElementById("global-play-btn");
-    if (playBtnIcon) {
-        playBtnIcon.className = "fa-solid fa-circle-notch fa-spin play-btn";
-    }
 
     const playPromise = player.play();
     if (playPromise !== undefined) {
         playPromise.then(() => {
             window.isAudioPlaying = true;
-            if (playBtnIcon) playBtnIcon.className = "fa-solid fa-pause play-btn";
-            if (radioPlayBtn) {
-                radioPlayBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
-                radioPlayBtn.removeAttribute("data-loading");
-            }
-            const playlistPlayBtn = document.getElementById("playlist-play-btn");
-            if (playlistPlayBtn) playlistPlayBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
-            const wave = document.getElementById("radio-music-wave");
-            if (wave) wave.classList.add("playing");
+            if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
             console.log("[DCLM Audio] Playing stream successfully:", finalUrl);
         }).catch(err => {
-            console.warn("[DCLM Audio] Play waiting for user gesture:", err);
+            console.warn("[DCLM Audio] Play waiting for user interaction/buffer:", err);
             window.isAudioPlaying = false;
-            if (radioPlayBtn) {
-                radioPlayBtn.innerHTML = '<i class="fa-solid fa-play" style="margin-left: 3px;"></i>';
-                radioPlayBtn.removeAttribute("data-loading");
-            }
-            if (playBtnIcon) playBtnIcon.className = "fa-solid fa-play play-btn";
             if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
         });
     }
+    window.isAudioPlaying = true;
+    if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
 };
 
 window.resumeVirtualPlaylist = function() {

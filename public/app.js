@@ -812,20 +812,42 @@ function toggleSermonAudio() {
         const audioBar = document.getElementById("global-audio-bar");
         if (audioBar) audioBar.classList.add("visible");
 
-        // Sync and play the current live stream or 24/7 virtual broadcast
+        // 1. If currently in library mode (or user was listening to a library track/hymn):
+        const isLibraryMode = player.playbackMode === 'library' || window.currentPlaybackMode === 'library';
+        if (isLibraryMode && player.src) {
+            console.log("[Audio] Synchronously resuming library on-demand audio playback...");
+            const resumePromise = player.play();
+            if (resumePromise !== undefined) {
+                resumePromise.then(() => {
+                    isAudioPlaying = true;
+                    window.isAudioPlaying = true;
+                    if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
+                }).catch(e => console.warn("[Radio] Library resume error:", e));
+            }
+            isAudioPlaying = true;
+            window.isAudioPlaying = true;
+            if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
+            return;
+        }
+
+        // 2. If 24/7 radio or live broadcast:
         if (window.syncPlayerWithGlobalBroadcast) {
             window.syncPlayerWithGlobalBroadcast(true);
         } else if (player.src) {
             player.play().catch(e => console.warn("[Radio] Direct play error:", e));
+            isAudioPlaying = true;
+            window.isAudioPlaying = true;
+            if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
         }
     } else {
-        // Pause audio
+        // Pause audio cleanly
         player.pause();
         isAudioPlaying = false;
+        window.isAudioPlaying = false;
         
         if (playBtnIcon) playBtnIcon.className = "fa-solid fa-play play-btn";
         if (playlistPlayBtn) playlistPlayBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
-        if (radioPlayBtn) radioPlayBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
+        if (radioPlayBtn) radioPlayBtn.innerHTML = '<i class="fa-solid fa-play" style="margin-left: 3px;"></i>';
         if (discIcon) {
             discIcon.className = "fa-solid fa-compact-disc";
             discIcon.style.animationDuration = "";
@@ -869,8 +891,18 @@ window.handleRadioAudioSeek = function(e) {
 
 // Autoplay next track sequence in lockstep with 24/7 time engine
 function handleAudioEnded() {
+    const player = document.getElementById("global-radio-player");
+    // If user was listening to an on-demand Library resource or Hymn, do NOT force switch to 24/7 radio!
+    if (window.currentPlaybackMode === 'library' || (player && player.playbackMode === 'library')) {
+        console.log("[Audio] Library audio completed.");
+        isAudioPlaying = false;
+        window.isAudioPlaying = false;
+        if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
+        return;
+    }
+
     // If currently on live stream, do NOT cycle tracks
-    if (currentPlayingTrackId === 'live' || window.currentPlayingTrackId === 'live') {
+    if (currentPlayingTrackId === 'live' || window.currentPlayingTrackId === 'live' || (player && player.playbackMode === 'live')) {
         console.warn("[Radio] Live stream ended or connection closed.");
         const isLiveOnline = Boolean(window._liveAudioSettings?.audioUrl && window._liveAudioSettings?.audioUrl.trim().length > 0 && window._liveAudioSettings?.isLive === true);
         if (!isLiveOnline && window.syncPlayerWithGlobalBroadcast) {
@@ -1319,6 +1351,9 @@ if (document.readyState === "loading") {
 }
 
 window.syncPlayerWithGlobalBroadcast = function(forcePlay = false) {
+    const player = document.getElementById("global-radio-player");
+    if (!player) return;
+
     // Check if an active Live Audio Stream is configured and active
     let liveUrl = (window._liveAudioSettings?.audioUrl || "").trim();
     let isLiveAudioOnline = Boolean(liveUrl && window._liveAudioSettings?.isLive === true);
@@ -1335,7 +1370,7 @@ window.syncPlayerWithGlobalBroadcast = function(forcePlay = false) {
         };
     } else {
         // 24/7 Virtual Radio Mode (Synchronized across all listeners)
-        const computed = window.calculateVirtualRadioPlayback();
+        const computed = window.calculateVirtualRadioPlayback ? window.calculateVirtualRadioPlayback() : null;
         if (computed && computed.track) {
             state = {
                 trackId: computed.track.id.toString(),
@@ -1367,6 +1402,10 @@ window.syncPlayerWithGlobalBroadcast = function(forcePlay = false) {
         }
     }
 
+    const isSyncLive = state.trackId === 'live';
+    const startedAt = state.startedAt ? window.parseStartedAt(state.startedAt) : Date.now();
+    const elapsedSeconds = !isSyncLive ? (state.offset !== undefined ? state.offset : Math.max(0, (window.getSyncedTime() - startedAt) / 1000)) : 0;
+
     // Set lockstep playback modes
     if (isSyncLive) {
         player.playbackMode = 'live';
@@ -1378,32 +1417,28 @@ window.syncPlayerWithGlobalBroadcast = function(forcePlay = false) {
     
     window._currentRadioPlaybackState = state;
 
-    const player = document.getElementById("global-radio-player");
-    if (!player) return;
-
     player.currentPlayingTrackId = state.trackId;
     window.currentPlayingTrackId = state.trackId;
     currentPlayingTrackId = state.trackId;
 
     // Update UI titles & labels everywhere
+    const formattedTitle = (state.title || "DCLM OSUN II RADIO").toUpperCase();
+    const formattedSpeaker = state.speaker || "Deeper Life Bible Church";
+
     const radioTitle = document.getElementById("radio-player-title");
     const radioSpeaker = document.getElementById("radio-player-speaker");
-    if (radioTitle) radioTitle.textContent = (state.title || "DCLM OSUN II RADIO").toUpperCase();
-    if (radioSpeaker) radioSpeaker.textContent = state.speaker || "Deeper Life Bible Church";
+    if (radioTitle) radioTitle.textContent = formattedTitle;
+    if (radioSpeaker) radioSpeaker.textContent = formattedSpeaker;
 
     const playlistTitle = document.getElementById("playlist-track-title");
     const playlistSpeaker = document.getElementById("playlist-track-speaker");
-    if (playlistTitle) playlistTitle.textContent = (state.title || "DCLM OSUN II RADIO").toUpperCase();
-    if (playlistSpeaker) playlistSpeaker.textContent = state.speaker || "Deeper Life Bible Church";
+    if (playlistTitle) playlistTitle.textContent = formattedTitle;
+    if (playlistSpeaker) playlistSpeaker.textContent = formattedSpeaker;
 
     const currentTitle = document.getElementById("current-track-title");
     const currentSpeaker = document.getElementById("current-track-speaker");
-    if (currentTitle) currentTitle.textContent = (state.title || "DCLM OSUN II RADIO").toUpperCase();
-    if (currentSpeaker) currentSpeaker.textContent = state.speaker || "Deeper Life Bible Church";
-
-    const isSyncLive = state.trackId === 'live';
-    const startedAt = state.startedAt ? window.parseStartedAt(state.startedAt) : Date.now();
-    const elapsedSeconds = !isSyncLive ? (state.offset !== undefined ? state.offset : Math.max(0, (window.getSyncedTime() - startedAt) / 1000)) : 0;
+    if (currentTitle) currentTitle.textContent = formattedTitle;
+    if (currentSpeaker) currentSpeaker.textContent = formattedSpeaker;
 
     const shouldPlay = isAudioPlaying || forcePlay;
     
@@ -1417,180 +1452,80 @@ window.syncPlayerWithGlobalBroadcast = function(forcePlay = false) {
             return;
         }
 
-        // Show immediate responsive green round loading spinner on play buttons
-        const radioPlayBtn = document.getElementById("radio-play-btn");
-        if (radioPlayBtn) {
-            radioPlayBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin" style="font-size: 26px; color: #22c55e;"></i>';
-            radioPlayBtn.setAttribute("data-loading", "true");
-        }
-        const globalPlayBtn = document.getElementById("global-play-btn");
-        if (globalPlayBtn) {
-            globalPlayBtn.className = "fa-solid fa-circle-notch fa-spin play-btn";
-            globalPlayBtn.style.color = "#22c55e";
-        }
-        const playlistPlayBtn = document.getElementById("playlist-play-btn");
-        if (playlistPlayBtn) {
-            playlistPlayBtn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin" style="font-size: 16px; color: #22c55e;"></i>';
-        }
+        const targetSeek = Math.max(0, elapsedSeconds);
+        const playUrl = state.audioUrl;
 
-        window.resolveTrackAudioUrl(state.trackId, state.audioUrl).then(playUrl => {
-            if (!playUrl) {
-                console.error("[Radio] Could not resolve audio URL for track:", state.trackId);
-                if (radioPlayBtn) {
-                    radioPlayBtn.innerHTML = '<i class="fa-solid fa-play" style="margin-left: 3px;"></i>';
-                    radioPlayBtn.removeAttribute("data-loading");
-                }
-                if (globalPlayBtn) {
-                    globalPlayBtn.className = "fa-solid fa-play play-btn";
-                    globalPlayBtn.style.color = "";
-                }
-                if (playlistPlayBtn) {
-                    playlistPlayBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
-                }
-                return;
+        // Check if player source is already set to this track
+        const isSameSrc = player.src && (player.src === playUrl || player.src.endsWith(playUrl) || (player.originalSrc && player.originalSrc === playUrl) || (window.isSameAudioSource && window.isSameAudioSource(player.src, playUrl)));
+
+        if (isSameSrc) {
+            // Already loaded! If paused, resume synchronously right now
+            const currentDiff = Math.abs((player.currentTime || 0) - targetSeek);
+            if (currentDiff > 3.0 && (player.readyState >= 1 || (player.duration && isFinite(player.duration)))) {
+                try {
+                    player.currentTime = targetSeek;
+                } catch(e) {}
             }
-            player.blobUrl = playUrl;
-
-            // Check if player source is already set
-            const isSameSrc = player.src && (player.src === playUrl || player.src.endsWith(playUrl) || (player.originalSrc && player.originalSrc === state.audioUrl));
             
-            const applySeekAndPlay = (forceSeek = false) => {
-                const targetSeek = Math.max(0, elapsedSeconds);
-                const currentDiff = Math.abs((player.currentTime || 0) - targetSeek);
-                const isPlayingSmoothly = !player.paused && currentDiff < 3.0;
-
-                // Always record pending seek time so loadedmetadata/canplay will snap if not ready yet
-                if (targetSeek > 0) {
-                    player.pendingSeekTime = targetSeek;
-                }
-
-                // Snap seek position if out of sync or forced
-                if (!isPlayingSmoothly && (forceSeek || currentDiff > 3.0)) {
-                    if (targetSeek > 0 && (player.readyState >= 1 || (player.duration && isFinite(player.duration)))) {
-                        try {
-                            player.currentTime = targetSeek;
-                            console.log("[Radio Sync] Snapped seek position to second:", targetSeek);
-                        } catch(e) {
-                            console.warn("[Radio Sync] Seek error:", e);
-                        }
-                    }
-                }
-
-                if (player.paused) {
-                    player.play().then(() => {
-                        // Enforce seek after play promise resolves (catches browser resets to 0:00)
-                        if (targetSeek > 0 && Math.abs((player.currentTime || 0) - targetSeek) > 2.0) {
-                            try {
-                                player.currentTime = targetSeek;
-                                console.log("[Radio Sync] Enforced target seek post-play:", targetSeek);
-                            } catch(e) {}
-                        }
-
-                        isAudioPlaying = true;
-                        window.isAudioPlaying = true;
-                        _consecutiveAudioErrors = 0;
-                        const playBtnIcon = document.getElementById("global-play-btn");
-                        if (playBtnIcon) {
-                            playBtnIcon.className = "fa-solid fa-pause play-btn";
-                            playBtnIcon.style.color = "";
-                        }
-                        
-                        const radioPlayBtn = document.getElementById("radio-play-btn");
-                        if (radioPlayBtn) {
-                            radioPlayBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
-                            radioPlayBtn.removeAttribute("data-loading");
-                        }
-                        
-                        const playlistPlayBtn = document.getElementById("playlist-play-btn");
-                        if (playlistPlayBtn) playlistPlayBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
-                        
-                        const discIcon = document.getElementById("playlist-disc-icon");
-                        if (discIcon) {
-                            discIcon.className = "fa-solid fa-compact-disc fa-spin";
-                            discIcon.style.animationDuration = "4s";
-                        }
-                        
-                        const wave = document.getElementById("radio-music-wave");
-                        if (wave) wave.classList.add("playing");
-                        
-                        updateActivePlaylistTrackHighlight();
-                        if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
-                        if (window.joinRadioPresence) window.joinRadioPresence();
-                        updateMediaSession(state.title, state.speaker);
-                    }).catch(err => {
-                        console.error("[Radio Sync] Play error:", err);
-                        isAudioPlaying = false;
-                        window.isAudioPlaying = false;
-                        if (radioPlayBtn) {
-                            radioPlayBtn.innerHTML = '<i class="fa-solid fa-play" style="margin-left: 3px;"></i>';
-                            radioPlayBtn.removeAttribute("data-loading");
-                        }
-                        if (globalPlayBtn) {
-                            globalPlayBtn.className = "fa-solid fa-play play-btn";
-                            globalPlayBtn.style.color = "";
-                        }
-                        if (playlistPlayBtn) {
-                            playlistPlayBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
-                        }
-                        if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
-                    });
-                } else {
+            // SYNCHRONOUS play call keeps user gesture token!
+            const p = player.play();
+            if (p !== undefined) {
+                p.then(() => {
                     isAudioPlaying = true;
                     window.isAudioPlaying = true;
-                    if (radioPlayBtn) {
-                        radioPlayBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
-                        radioPlayBtn.removeAttribute("data-loading");
-                    }
-                    if (globalPlayBtn) {
-                        globalPlayBtn.className = "fa-solid fa-pause play-btn";
-                        globalPlayBtn.style.color = "";
-                    }
+                    _consecutiveAudioErrors = 0;
                     if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
-                }
-            };
-
-            if (!isSameSrc || !player.src) {
-                player.src = playUrl;
-                player.load();
-                let started = false;
-                const startPlayback = () => {
-                    if (started) return;
-                    started = true;
-                    player.removeEventListener('loadedmetadata', startPlayback);
-                    player.removeEventListener('canplay', startPlayback);
-                    applySeekAndPlay(false);
-                };
-                if (player.readyState >= 1) {
-                    startPlayback();
-                } else {
-                    player.addEventListener('loadedmetadata', startPlayback, { once: true });
-                    player.addEventListener('canplay', startPlayback, { once: true });
-                    setTimeout(startPlayback, 1000);
-                }
-            } else {
-                // Source already loaded, apply seek and play
-                applySeekAndPlay(false);
+                    if (window.joinRadioPresence) window.joinRadioPresence();
+                    updateMediaSession(state.title, state.speaker);
+                }).catch(err => {
+                    console.warn("[Radio Sync] play rejected:", err);
+                });
             }
-        });
+            isAudioPlaying = true;
+            window.isAudioPlaying = true;
+            if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
+            return;
+        }
+
+        // New track to load:
+        player.originalSrc = playUrl;
+        player.src = playUrl;
+        
+        if (targetSeek > 0) {
+            player.pendingSeekTime = targetSeek;
+            if (player.readyState >= 1) {
+                try { player.currentTime = targetSeek; } catch(e) {}
+            } else {
+                player.addEventListener('loadedmetadata', () => {
+                    try { player.currentTime = targetSeek; } catch(e) {}
+                }, { once: true });
+            }
+        }
+
+        // SYNCHRONOUS play immediately after setting player.src starts network stream instantly!
+        const p = player.play();
+        if (p !== undefined) {
+            p.then(() => {
+                isAudioPlaying = true;
+                window.isAudioPlaying = true;
+                _consecutiveAudioErrors = 0;
+                if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
+                if (window.joinRadioPresence) window.joinRadioPresence();
+                updateMediaSession(state.title, state.speaker);
+            }).catch(err => {
+                console.warn("[Radio Sync] play waiting for interaction or buffer:", err);
+            });
+        }
+        isAudioPlaying = true;
+        window.isAudioPlaying = true;
+        if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
     } else {
         // UI sync without autoplay
-        const playBtnIcon = document.getElementById("global-play-btn");
-        if (playBtnIcon && !isAudioPlaying) {
-            playBtnIcon.className = "fa-solid fa-play play-btn";
-            playBtnIcon.style.color = "";
-        }
-        
-        const radioPlayBtn = document.getElementById("radio-play-btn");
-        if (radioPlayBtn && !isAudioPlaying && radioPlayBtn.getAttribute("data-loading") !== "true") {
-            radioPlayBtn.innerHTML = '<i class="fa-solid fa-play" style="margin-left: 3px;"></i>';
-        }
-        
-        const playlistPlayBtn = document.getElementById("playlist-play-btn");
-        if (playlistPlayBtn && !isAudioPlaying) playlistPlayBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
+        if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
     }
 };
 
-// Lockstep 24/7 Virtual Radio Watchdog: ensures ALL devices stay in 100% sync
+// Lockstep 24/7 Virtual Radio Watchdog: ensures ALL devices stay in 100% sync smoothly
 if (window._radioLockstepWatchdogInterval) {
     clearInterval(window._radioLockstepWatchdogInterval);
 }
@@ -1606,7 +1541,6 @@ window._radioLockstepWatchdogInterval = setInterval(() => {
     // If live stream is active, do not sync virtual radio
     const isLiveOnline = Boolean(window._liveAudioSettings?.audioUrl && window._liveAudioSettings?.audioUrl.trim().length > 0 && window._liveAudioSettings?.isLive === true);
     if (isLiveOnline) {
-        // If live stream is online and player is actively playing 24/7 radio, switch immediately to live stream!
         const isRadioMode = player.playbackMode === 'radio' || window.currentPlaybackMode === 'radio' || !player.playbackMode;
         if ((window.isAudioPlaying || !player.paused) && player.currentPlayingTrackId !== 'live' && isRadioMode) {
             console.log("[Radio Watchdog] Live stream is online. Transitioning active listener to live sanctuary feed...");
@@ -1637,14 +1571,32 @@ window._radioLockstepWatchdogInterval = setInterval(() => {
             return;
         }
 
+        // NEVER correct drift while buffering or seeking!
+        if (player.seeking || player.readyState < 3) {
+            return;
+        }
+
         // Check drift within the current track
         const currentSec = player.currentTime || 0;
         const targetSec = computed.offset;
-        const drift = Math.abs(currentSec - targetSec);
+        const diff = targetSec - currentSec; // positive means player is behind, negative means ahead
+        const absDiff = Math.abs(diff);
 
-        // If drift exceeds 3.0 seconds, re-snap to lockstep
-        if (drift > 3.0) {
-            console.log(`[Radio Lockstep] Correcting audio drift of ${drift.toFixed(1)}s (current: ${currentSec.toFixed(1)}s, target: ${targetSec.toFixed(1)}s)`);
+        // Professional smooth clock drift correction without pops, clicks, or buffering stalls:
+        if (absDiff <= 1.2) {
+            // In sync! Normal speed
+            if (player.playbackRate !== 1.0) player.playbackRate = 1.0;
+        } else if (absDiff <= 6.0) {
+            // Gentle catch-up / slow-down without audio drops or pops
+            if (diff > 0) {
+                player.playbackRate = 1.05; // gently catch up 5% faster
+            } else {
+                player.playbackRate = 0.95; // gently slow down 5%
+            }
+        } else {
+            // Large drift (> 6 seconds, e.g. user resumed from background tab or network pause)
+            console.log(`[Radio Lockstep] Large drift of ${absDiff.toFixed(1)}s detected. Snapping to ${targetSec.toFixed(1)}s`);
+            player.playbackRate = 1.0;
             try {
                 player.currentTime = targetSec;
             } catch(e) {
@@ -1659,7 +1611,7 @@ window._radioLockstepWatchdogInterval = setInterval(() => {
             }
         }
     }
-}, 5000);
+}, 4000);
 
 let _consecutiveAudioErrors = 0;
 let _lastAudioErrorTime = 0;
@@ -2094,24 +2046,57 @@ window.closeVideoArchiveModal = function() {
     }
 };
 
-// Render default suggestions (combines uploaded audios and videos sorted by time)
+// Helper to get all available audio tracks (both uploaded fellowship audios and 260 GHS hymn audios)
+window.getAllAvailableAudioTracks = function() {
+    const radioItems = (window._currentRadioTracks || []).map(t => ({
+        id: t.id ? t.id.toString() : 'track',
+        title: t.title || "Radio Track",
+        speaker: t.speaker || "DCLM Choir",
+        audio_url: t.audio_url || t.audioUrl || '',
+        category: 'Radio & Sermons',
+        isHymn: false,
+        type: 'audio'
+    }));
+    
+    let hymnItems = [];
+    const hymnsDb = window.GHS_HYMNS?.hymns || {};
+    const hymnKeys = Object.keys(hymnsDb);
+    if (hymnKeys.length > 0) {
+        hymnItems = hymnKeys.map(k => {
+            const h = hymnsDb[k];
+            return {
+                id: `ghs_${h.number}`,
+                hymnNumber: h.number,
+                title: `GHS ${h.number}: ${h.title}`,
+                speaker: `Category: ${(h.category || 'GHS Hymnal').toUpperCase()}`,
+                audio_url: `/audio/${h.number}.mp3`,
+                category: 'GHS Hymns',
+                isHymn: true,
+                type: 'audio'
+            };
+        });
+    }
+    return [...radioItems, ...hymnItems];
+};
+
+// Render default suggestions (combines uploaded audios, GHS hymns, and videos)
 window.renderSearchSuggestions = function() {
     const container = document.getElementById("search-results-container");
     const titleEl = document.getElementById("search-results-title");
     if (!container) return;
 
-    const audios = window._currentRadioTracks || [];
+    const audios = window.getAllAvailableAudioTracks();
     const videos = window._currentVideoTracks || [];
 
     const suggestions = [];
-    audios.forEach(a => suggestions.push({ type: 'audio', ...a }));
+    audios.forEach(a => suggestions.push(a));
     videos.forEach(v => suggestions.push({ type: 'video', ...v }));
 
-    // Sort: show newest uploaded files first
+    // Prioritize uploaded radio tracks and videos first, then classic hymns
     suggestions.sort((a, b) => {
-        const timeA = a.createdAt ? (a.createdAt.seconds || new Date(a.createdAt).getTime()) : 0;
-        const timeB = b.createdAt ? (b.createdAt.seconds || new Date(b.createdAt).getTime()) : 0;
-        return timeB - timeA;
+        if (a.isHymn && !b.isHymn) return 1;
+        if (!a.isHymn && b.isHymn) return -1;
+        return 0;
     });
 
     if (suggestions.length === 0) {
@@ -2124,8 +2109,8 @@ window.renderSearchSuggestions = function() {
         return;
     }
 
-    if (titleEl) titleEl.textContent = "Suggestions";
-    renderSearchResultsList(suggestions);
+    if (titleEl) titleEl.textContent = `Suggestions (${suggestions.length})`;
+    renderSearchResultsList(suggestions.slice(0, 50));
 };
 
 // Query search handler inside the main search bar
@@ -2140,16 +2125,18 @@ window.handleMainSearch = function(queryStr) {
         return;
     }
 
-    const audios = window._currentRadioTracks || [];
+    const audios = window.getAllAvailableAudioTracks();
     const videos = window._currentVideoTracks || [];
 
     const combined = [];
-    audios.forEach(a => combined.push({ type: 'audio', ...a }));
+    audios.forEach(a => combined.push(a));
     videos.forEach(v => combined.push({ type: 'video', ...v }));
 
     const filtered = combined.filter(item =>
         (item.title && item.title.toLowerCase().includes(term)) ||
-        (item.speaker && item.speaker.toLowerCase().includes(term))
+        (item.speaker && item.speaker.toLowerCase().includes(term)) ||
+        (item.category && item.category.toLowerCase().includes(term)) ||
+        (item.hymnNumber && item.hymnNumber.toString() === term)
     );
 
     if (titleEl) titleEl.textContent = `Search Results (${filtered.length})`;
@@ -2158,13 +2145,13 @@ window.handleMainSearch = function(queryStr) {
         container.innerHTML = `
             <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 12px; padding: 24px; text-align: center; color: #64748b; font-size: 13px; width: 100%;">
                 <i class="fa-solid fa-circle-exclamation" style="font-size: 24px; margin-bottom: 8px; display: block; color: #475569;"></i>
-                No matching sermons or videos found for "${queryStr}".
+                No matching sermons, hymns, or videos found for "${queryStr}".
             </div>
         `;
         return;
     }
 
-    renderSearchResultsList(filtered);
+    renderSearchResultsList(filtered.slice(0, 100));
 };
 
 // Result items card list builder
@@ -2174,12 +2161,12 @@ function renderSearchResultsList(items) {
 
     container.innerHTML = items.map(item => {
         const isAudio = item.type === 'audio';
-        const typeLabel = isAudio ? 'Audio' : 'Video';
-        const typeColor = isAudio ? '#a855f7' : '#ef4444';
-        const iconClass = isAudio ? 'fa-microphone' : 'fa-video';
+        const typeLabel = item.isHymn ? 'GHS Hymn' : (isAudio ? 'Audio' : 'Video');
+        const typeColor = item.isHymn ? '#38bdf8' : (isAudio ? '#a855f7' : '#ef4444');
+        const iconClass = item.isHymn ? 'fa-music' : (isAudio ? 'fa-microphone' : 'fa-video');
 
-        const titleEscaped = escapedString(item.title || "Untitled Sermon");
-        const speakerEscaped = escapedString(item.speaker || "Guest Preacher");
+        const titleEscaped = escapedString(item.title || "Untitled Resource");
+        const speakerEscaped = escapedString(item.speaker || "DCLM Pulpit");
 
         const clickHandler = isAudio ?
             `window.playAudioStream('${escapedString(item.audio_url || item.audioUrl)}', '${titleEscaped}', '${speakerEscaped}', '${item.id}')` :
@@ -2187,14 +2174,14 @@ function renderSearchResultsList(items) {
 
         return `
             <div class="search-result-item search-result-card" onclick="${clickHandler}" style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background-color: rgba(13, 30, 49, 0.45); border: 1px solid rgba(255, 255, 255, 0.03); cursor: pointer; transition: all 0.2s;">
-                <div style="width: 34px; height: 34px; background: rgba(${isAudio ? '168,85,247' : '239,68,68'}, 0.1); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: ${typeColor}; border: 1px solid rgba(${isAudio ? '168,85,247' : '239,68,68'}, 0.25); flex-shrink: 0;">
+                <div style="width: 34px; height: 34px; background: rgba(${item.isHymn ? '56,189,248' : (isAudio ? '168,85,247' : '239,68,68')}, 0.1); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: ${typeColor}; border: 1px solid rgba(${item.isHymn ? '56,189,248' : (isAudio ? '168,85,247' : '239,68,68')}, 0.25); flex-shrink: 0;">
                     <i class="fa-solid ${iconClass}" style="font-size: 13px;"></i>
                 </div>
                 <div style="flex: 1; overflow: hidden; min-width: 0;">
                     <span style="font-size: 13px; font-weight: 700; color: #ffffff; display: block; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${item.title}</span>
                     <span style="font-size: 10px; color: #94a3b8; display: block; margin-top: 2px;">${item.speaker}</span>
                 </div>
-                <div style="font-size: 9.5px; font-weight: 700; color: ${typeColor}; background: rgba(${isAudio ? '168,85,247' : '239,68,68'}, 0.1); border: 1px solid rgba(${isAudio ? '168,85,247' : '239,68,68'}, 0.2); border-radius: 20px; padding: 3px 8px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.5px;">${typeLabel}</div>
+                <div style="font-size: 9.5px; font-weight: 700; color: ${typeColor}; background: rgba(${item.isHymn ? '56,189,248' : (isAudio ? '168,85,247' : '239,68,68')}, 0.1); border: 1px solid rgba(${item.isHymn ? '56,189,248' : (isAudio ? '168,85,247' : '239,68,68')}, 0.2); border-radius: 20px; padding: 3px 8px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.5px;">${typeLabel}</div>
             </div>
         `;
     }).join('');
@@ -2245,7 +2232,7 @@ window.renderLibraryTab = function() {
     let items = [];
     
     if (mode === 'audio') {
-        items = window._currentRadioTracks || [];
+        items = window.getAllAvailableAudioTracks ? window.getAllAvailableAudioTracks() : (window._currentRadioTracks || []);
     } else if (mode === 'video') {
         items = window._currentVideoTracks || [];
     } else if (mode === 'outline') {
@@ -2257,13 +2244,15 @@ window.renderLibraryTab = function() {
         items = items.filter(item => 
             (item.title && item.title.toLowerCase().includes(queryStr)) ||
             (item.speaker && item.speaker.toLowerCase().includes(queryStr)) ||
-            (item.author && item.author.toLowerCase().includes(queryStr))
+            (item.author && item.author.toLowerCase().includes(queryStr)) ||
+            (item.category && item.category.toLowerCase().includes(queryStr)) ||
+            (item.hymnNumber && item.hymnNumber.toString() === queryStr)
         );
     }
     
     if (items.length === 0) {
-        let msg = "No audio sermons found in the library.";
-        let icon = "fa-microphone";
+        let msg = "No audio resources found in the library.";
+        let icon = "fa-headphones";
         if (mode === 'video') {
             msg = "No video sermons found in the archives.";
             icon = "fa-video";
@@ -2290,18 +2279,25 @@ window.renderLibraryTab = function() {
         const titleEscaped = escapedString(item.title || "Untitled Resource");
         
         if (mode === 'audio') {
-            const speakerEscaped = escapedString(item.speaker || "Guest Speaker");
+            const speakerEscaped = escapedString(item.speaker || "DCLM Pulpit");
             const audioSrc = escapedString(item.audio_url || item.audioUrl || "");
+            const isHymn = Boolean(item.isHymn);
+            const icon = isHymn ? "fa-music" : "fa-microphone";
+            const badge = isHymn ? "GHS Hymn" : "Audio Track";
+            const badgeBg = isHymn ? "rgba(56, 189, 248, 0.12)" : "rgba(168, 85, 247, 0.12)";
+            const badgeColor = isHymn ? "#38bdf8" : "#a855f7";
+            const badgeBorder = isHymn ? "rgba(56, 189, 248, 0.25)" : "rgba(168, 85, 247, 0.25)";
+
             return `
                 <div class="search-result-item search-result-card" onclick="window.playAudioStream('${audioSrc}', '${titleEscaped}', '${speakerEscaped}', '${item.id}')" style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background-color: rgba(13, 30, 49, 0.45); border: 1px solid rgba(255, 255, 255, 0.03); cursor: pointer; transition: all 0.2s;">
-                    <div style="width: 34px; height: 34px; background: rgba(168, 85, 247, 0.1); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #a855f7; border: 1px solid rgba(168, 85, 247, 0.25); flex-shrink: 0;">
-                        <i class="fa-solid fa-microphone" style="font-size: 13px;"></i>
+                    <div style="width: 34px; height: 34px; background: ${badgeBg}; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: ${badgeColor}; border: 1px solid ${badgeBorder}; flex-shrink: 0;">
+                        <i class="fa-solid ${icon}" style="font-size: 13px;"></i>
                     </div>
                     <div style="flex: 1; overflow: hidden; min-width: 0;">
                         <span style="font-size: 13px; font-weight: 700; color: #ffffff; display: block; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${item.title}</span>
                         <span style="font-size: 10px; color: #94a3b8; display: block; margin-top: 2px;">${item.speaker}</span>
                     </div>
-                    <div style="font-size: 9.5px; font-weight: 700; color: #a855f7; background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 20px; padding: 3px 8px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.5px;">Play Audio</div>
+                    <div style="font-size: 9.5px; font-weight: 700; color: ${badgeColor}; background: ${badgeBg}; border: 1px solid ${badgeBorder}; border-radius: 20px; padding: 3px 8px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.5px;">${badge}</div>
                 </div>
             `;
         } else if (mode === 'video') {
