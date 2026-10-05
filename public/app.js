@@ -679,16 +679,17 @@ function playAudioStream(url, title, subtext, trackId = "") {
             delete player.pendingSeekTime;
             player.playbackRate = 1.0;
             const cleanUrl = url.split('?')[0];
-            const isAttachedToThisLiveStream = player.src && player.src.includes(cleanUrl);
+            const isAlreadyStreamingActive = player.src && player.src.includes(cleanUrl) && !player.paused && !player.ended && player.readyState >= 2 && !window._forceLiveReconnect;
+            delete window._forceLiveReconnect;
             
-            if (!isAttachedToThisLiveStream) {
+            if (!isAlreadyStreamingActive) {
                 const sep = url.includes('?') ? '&' : '?';
                 playUrl = `${cleanUrl}${sep}_live=${Date.now()}`;
                 player.src = playUrl;
                 player.load();
-                console.log("[Radio] Switched directly to Live Stream audio source:", playUrl);
+                console.log("[Radio] Connected to fresh Live Stream audio socket:", playUrl);
             } else {
-                console.log("[Radio] Resuming active Live Stream audio socket without re-buffering.");
+                console.log("[Radio] Retaining active Live Stream audio socket.");
             }
         } else {
             player.playbackRate = 1.0;
@@ -934,7 +935,24 @@ function handleAudioEnded() {
     if (currentPlayingTrackId === 'live' || window.currentPlayingTrackId === 'live' || (player && player.playbackMode === 'live')) {
         console.warn("[Radio] Live stream ended or connection closed.");
         const isLiveOnline = Boolean(window._liveAudioSettings?.audioUrl && window._liveAudioSettings?.audioUrl.trim().length > 0 && window._liveAudioSettings?.isLive === true);
+        if (isLiveOnline) {
+            // Live broadcast is ongoing on server! The TCP connection dropped (e.g. mobile network blip).
+            // Auto-reconnect seamlessly if listener was actively listening
+            if (window.isAudioPlaying) {
+                console.log("[Radio] Live audio connection dropped by network. Auto-reconnecting in 1.5s...");
+                if (window._liveReconnectTimeout) clearTimeout(window._liveReconnectTimeout);
+                window._liveReconnectTimeout = setTimeout(() => {
+                    if (window.isAudioPlaying && window._liveAudioSettings?.isLive === true) {
+                        window._forceLiveReconnect = true;
+                        window.syncPlayerWithGlobalBroadcast(true);
+                    }
+                }, 1500);
+            }
+            return;
+        }
+
         if (!isLiveOnline && window.syncPlayerWithGlobalBroadcast) {
+            console.log("[Radio] Live broadcast concluded. Transitioning back to 24/7 radio playlist...");
             window.currentPlayingTrackId = null;
             window.syncPlayerWithGlobalBroadcast(window.isAudioPlaying);
         }
@@ -1574,7 +1592,11 @@ window._radioLockstepWatchdogInterval = setInterval(() => {
         }
         return;
     }
-    if (player.currentPlayingTrackId === 'live' || window.currentPlayingTrackId === 'live') {
+    if (!isLiveOnline && (player.currentPlayingTrackId === 'live' || window.currentPlayingTrackId === 'live')) {
+        console.log("[Radio Watchdog] Live stream has concluded. Transitioning to scheduled 24/7 radio...");
+        window.currentPlayingTrackId = null;
+        player.currentPlayingTrackId = null;
+        window.syncPlayerWithGlobalBroadcast(window.isAudioPlaying || !player.paused);
         return;
     }
 
@@ -1749,9 +1771,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Audio track error listener (automatically handles stream blocks or skips broken files)
         globalPlayer.addEventListener("error", (e) => {
-            // For live streams: show detailed mixed-content diagnostics or retry
-            if (currentPlayingTrackId === 'live' || window.currentPlayingTrackId === 'live' || globalPlayer.currentPlayingTrackId === 'live') {
-                console.warn("[Radio] Live stream transient event:", globalPlayer.src);
+            // For live streams: show diagnostics and trigger auto-reconnect if broadcast is live
+            if (currentPlayingTrackId === 'live' || window.currentPlayingTrackId === 'live' || globalPlayer.currentPlayingTrackId === 'live' || globalPlayer.playbackMode === 'live') {
+                console.warn("[Radio] Live stream error/drop:", globalPlayer.src);
+                const isLiveOnline = Boolean(window._liveAudioSettings?.audioUrl && window._liveAudioSettings?.audioUrl.trim().length > 0 && window._liveAudioSettings?.isLive === true);
+                if (isLiveOnline && window.isAudioPlaying) {
+                    console.log("[Radio] Live stream error encountered. Auto-reconnecting in 2s...");
+                    if (window._liveReconnectTimeout) clearTimeout(window._liveReconnectTimeout);
+                    window._liveReconnectTimeout = setTimeout(() => {
+                        if (window.isAudioPlaying && window._liveAudioSettings?.isLive === true) {
+                            window._forceLiveReconnect = true;
+                            window.syncPlayerWithGlobalBroadcast(true);
+                        }
+                    }, 2000);
+                }
                 return;
             }
             
@@ -1844,16 +1877,37 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Buffering and low-bandwidth network handlers:
         // When device is on low bandwidth, browser pauses to fill audio buffer.
-        // We do NOT stop playback state or drop the audio pipeline.
+        let _liveStallWatchdogTimer = null;
+        const triggerLiveStallRecoveryIfNeeded = () => {
+            const isLive = currentPlayingTrackId === 'live' || window.currentPlayingTrackId === 'live' || globalPlayer.playbackMode === 'live';
+            if (isLive && window.isAudioPlaying) {
+                if (_liveStallWatchdogTimer) clearTimeout(_liveStallWatchdogTimer);
+                _liveStallWatchdogTimer = setTimeout(() => {
+                    const stillLive = currentPlayingTrackId === 'live' || window.currentPlayingTrackId === 'live' || globalPlayer.playbackMode === 'live';
+                    if (window.isAudioPlaying && stillLive && globalPlayer.readyState < 3) {
+                        console.warn("[Audio Engine] Live audio stalled for >7s due to network starvation. Soft-reconnecting to stream edge...");
+                        window._forceLiveReconnect = true;
+                        window.syncPlayerWithGlobalBroadcast(true);
+                    }
+                }, 7000);
+            }
+        };
+
         globalPlayer.addEventListener("waiting", () => {
             console.log("[Audio Engine] Buffering incoming audio stream frames...");
+            triggerLiveStallRecoveryIfNeeded();
         });
 
         globalPlayer.addEventListener("stalled", () => {
             console.warn("[Audio Engine] Stream stalled (low network throughput). Waiting for buffer fill...");
+            triggerLiveStallRecoveryIfNeeded();
         });
 
         globalPlayer.addEventListener("playing", () => {
+            if (_liveStallWatchdogTimer) {
+                clearTimeout(_liveStallWatchdogTimer);
+                _liveStallWatchdogTimer = null;
+            }
             isAudioPlaying = true;
             window.isAudioPlaying = true;
             if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();

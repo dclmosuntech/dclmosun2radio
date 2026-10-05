@@ -31,8 +31,7 @@ dist-ssr
 .env.local
 .env.*.local
 
-# Tools & binaries
-tools/
+# Tools binaries & logs
 tools/*.exe
 tools/*.zip
 tools/*.log

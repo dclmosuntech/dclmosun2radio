@@ -244,7 +244,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 function broadcastAudio(chunk) {
-    // Maintain rolling burst buffer
+    // Maintain rolling burst buffer (128 KB for instant sync)
     burstBuffer = Buffer.concat([burstBuffer, chunk]);
     if (burstBuffer.length > MAX_BURST_BYTES) {
         burstBuffer = burstBuffer.slice(burstBuffer.length - MAX_BURST_BYTES);
@@ -252,9 +252,12 @@ function broadcastAudio(chunk) {
 
     for (const listener of webListeners) {
         try {
-            // Socket backpressure protection for slow network connections:
-            // If listener socket buffer is backed up (> 192KB), skip frame to prevent packet pile-up and stuttering
-            if (listener.writableLength && listener.writableLength > 196608) {
+            // If listener socket buffer is severely backed up (> 2MB = unresponsive/dead connection),
+            // clean up the dead socket cleanly so client reconnects fresh, rather than corrupting MP3 frames.
+            if (listener.writableLength && listener.writableLength > 2097152) {
+                console.warn('[Stream Server] Listener socket stalled (>2MB backlog). Terminating stale socket.');
+                try { listener.destroy(); } catch (e) {}
+                webListeners.delete(listener);
                 continue;
             }
             listener.write(chunk);
