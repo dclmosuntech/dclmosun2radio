@@ -543,14 +543,18 @@ function submitMediaReport(event) {
     
     if (!form || !successScreen) return;
     
-    console.log(`[Support Portal] Submitting media desk ticket: [Type: ${issueType.value}], [Details: ${issueDesc ? issueDesc.value : ""}]`);
+    console.log(`[Support Portal] Submitting media desk ticket: [Type: ${issueType?.value}], [Details: ${issueDesc ? issueDesc.value : ""}]`);
     
+    if (window.submitSupportMessage) {
+        window.submitSupportMessage(event);
+    }
+
     // Trigger sleek success transition
     form.style.display = "none";
     successScreen.style.display = "flex";
     
     // Reset forms
-    issueType.value = "";
+    if (issueType) issueType.value = "";
     if (issueDesc) issueDesc.value = "";
 }
 window.submitMediaReport = submitMediaReport;

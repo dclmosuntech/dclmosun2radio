@@ -18,8 +18,8 @@ const webListeners = new Set();
 let cloudflareProc = null;
 let publicHttpsStreamUrl = null;
 
-// 32KB Circular Burst Buffer so connecting browsers get instant MP3 sync frames & play with 0 codec errors
-const MAX_BURST_BYTES = 32768;
+// 128KB Circular Burst Buffer so connecting browsers get instant MP3 sync frames & solid 8-16s buffer
+const MAX_BURST_BYTES = 131072;
 let burstBuffer = Buffer.alloc(0);
 
 // Detect Local Network IPv4 (e.g. 192.168.x.x)
@@ -172,11 +172,12 @@ const server = net.createServer((socket) => {
                 socket.setNoDelay(true);
 
                 socket.write(
-                    'HTTP/1.1 200 OK\r\n' +
+                    'HTTP/1.0 200 OK\r\n' +
                     'Content-Type: audio/mpeg\r\n' +
                     'Access-Control-Allow-Origin: *\r\n' +
+                    'Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n' +
                     'Access-Control-Allow-Headers: *\r\n' +
-                    'Cache-Control: no-cache, no-store, must-revalidate, max-age=0\r\n' +
+                    'Cache-Control: no-cache, no-store, must-revalidate, max-age=0, no-transform\r\n' +
                     'Pragma: no-cache\r\n' +
                     'Expires: 0\r\n' +
                     'X-Accel-Buffering: no\r\n' +
@@ -185,7 +186,7 @@ const server = net.createServer((socket) => {
                     'icy-genre: Gospel\r\n' +
                     'icy-br: 64\r\n' +
                     'icy-pub: 1\r\n' +
-                    'Connection: keep-alive\r\n\r\n'
+                    'Connection: close\r\n\r\n'
                 );
 
                 // Immediately send burst buffer so browser decodes audio instantly without codec errors
@@ -251,6 +252,11 @@ function broadcastAudio(chunk) {
 
     for (const listener of webListeners) {
         try {
+            // Socket backpressure protection for slow network connections:
+            // If listener socket buffer is backed up (> 192KB), skip frame to prevent packet pile-up and stuttering
+            if (listener.writableLength && listener.writableLength > 196608) {
+                continue;
+            }
             listener.write(chunk);
         } catch (e) {
             webListeners.delete(listener);

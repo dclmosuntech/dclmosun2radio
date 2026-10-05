@@ -152,6 +152,18 @@ function compressBannerImage(file) {
     });
 }
 
+// ── Robust HTML & JS string escaping to prevent XSS injection ──
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+if (!window.escapeHtml) window.escapeHtml = escapeHtml;
+
 // ── Helper to compress audio files (downsamples to optimized 22kHz mono for fast 1s downloads) ──
 async function compressAudioFile(file, maxTargetMB = 2.0) {
     return new Promise(async (resolve, reject) => {
@@ -894,16 +906,16 @@ function appendChatBubbleUI(senderName, messageText, location = "", isAdmin = fa
     bubble.className = "chat-bubble" + (isAdmin ? " admin-bubble" : "");
     bubble.id = "chat-msg-" + docId;
 
-    const locTag = location ? ` <span class="bubble-location">• ${location}</span>` : '';
+    const locTag = location ? ` <span class="bubble-location">• ${escapeHtml(location)}</span>` : '';
     const adminTag = isAdmin ? ` <span class="bubble-admin-badge"><i class="fa-solid fa-shield-halved"></i> Admin</span>` : '';
 
     bubble.innerHTML = `
         <div class="bubble-meta">
-            <span class="bubble-sender">${senderName}</span>
+            <span class="bubble-sender">${escapeHtml(senderName)}</span>
             ${locTag}
             ${adminTag}
         </div>
-        <div class="bubble-body">${messageText}</div>
+        <div class="bubble-body">${escapeHtml(messageText)}</div>
     `;
 
     chatBox.appendChild(bubble);
@@ -1480,6 +1492,7 @@ function updateAllPlayerLabels(title, speaker) {
 }
 
 // ── Global Radio Player Functions ──
+const _priorAppPlayAudioStream = window.playAudioStream;
 window.playAudioStream = function(url, title, speaker, trackId) {
     const player = document.getElementById("global-radio-player");
     if (!player || !url) return;
@@ -1490,6 +1503,10 @@ window.playAudioStream = function(url, title, speaker, trackId) {
     }
 
     updateAllPlayerLabels(title, speaker);
+
+    if (_priorAppPlayAudioStream && _priorAppPlayAudioStream !== window.playAudioStream) {
+        return _priorAppPlayAudioStream(url, title, speaker, trackId);
+    }
 
     const isLiveStream = isLiveStreamUrl(url) || trackId === 'live';
     const isRadioMode = trackId === 'radio';
@@ -1915,10 +1932,10 @@ window.openUnitDashboard = function(deptId) {
                 ` : data.map(msg => `
                     <div style="margin-bottom: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 8px; padding: 10px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                            <span style="font-size: 10.5px; font-weight: 800; color: #38bdf8;">${msg.username}</span>
+                            <span style="font-size: 10.5px; font-weight: 800; color: #38bdf8;">${escapeHtml(msg.username || 'Member')}</span>
                             <span style="font-size: 8.5px; color: #64748b;">${new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                         </div>
-                        <p style="font-size: 11.5px; color: #cbd5e1; margin: 0; line-height: 1.4;">${msg.text}</p>
+                        <p style="font-size: 11.5px; color: #cbd5e1; margin: 0; line-height: 1.4;">${escapeHtml(msg.text || '')}</p>
                     </div>
                 `).join('');
                 feedEl.scrollTo({ top: feedEl.scrollHeight, behavior: "smooth" });
@@ -2133,12 +2150,16 @@ function initializeSupportSyncBridges() {
 
 window.submitSupportMessage = async function(event) {
     if (event) event.preventDefault();
-    const issueType = document.getElementById("report-issue-type").value;
-    const details = document.getElementById("report-issue-desc").value.trim();
-    const submitBtn = event.target.querySelector("button[type='submit']");
+    const issueTypeEl = document.getElementById("report-issue-type") || document.getElementById("support-category-select");
+    const detailsEl = document.getElementById("report-issue-desc") || document.getElementById("support-message-text");
+    const issueType = issueTypeEl ? issueTypeEl.value : "General Inquiry";
+    const details = detailsEl ? detailsEl.value.trim() : "";
+    const submitBtn = event?.target?.querySelector ? event.target.querySelector("button[type='submit']") : null;
 
-    submitBtn.textContent = "Submitting...";
-    submitBtn.disabled = true;
+    if (submitBtn) {
+        submitBtn.textContent = "Submitting...";
+        submitBtn.disabled = true;
+    }
 
     try {
         const payload = {
@@ -2149,23 +2170,27 @@ window.submitSupportMessage = async function(event) {
             created_at: new Date().toISOString()
         };
 
-        
-            await supabase.from('support_tickets').insert(payload);
-        
+        await supabase.from('support_tickets').insert(payload);
 
         alert("✅ Support ticket submitted successfully! A media desk officer will address it shortly.");
-        event.target.reset();
+        if (event?.target?.reset) event.target.reset();
         
-        // Hide Support Overlay Panel
+        // Hide Support Overlay Panel & Inquiries modal
         const modal = document.getElementById("report-issue-overlay");
         if (modal) modal.classList.remove("active");
+        const inquiriesModal = document.getElementById("support-inquiry-modal");
+        if (inquiriesModal) inquiriesModal.classList.remove("active");
+
+        if (window.refreshClientSupportTimeline) window.refreshClientSupportTimeline();
 
     } catch (err) {
         console.error("[Support] Submit ticket failed:", err);
         alert("Failed to submit ticket: " + err.message);
     } finally {
-        submitBtn.textContent = "Submit Issue Report";
-        submitBtn.disabled = false;
+        if (submitBtn) {
+            submitBtn.textContent = "Submit Issue Report";
+            submitBtn.disabled = false;
+        }
     }
 };
 
@@ -2737,10 +2762,14 @@ window.switchAdminTask = function(task) {
                         • <b>In BUTT:</b> Go to <i>Settings ➔ Audio ➔ Audio Device</i> ➔ Select <b>CABLE Output (VB-Audio Virtual Cable)</b> or <b>Stereo Mix</b>.
                     </div>
                     <div>
-                        <strong style="color:#38ef7d;">2. Eliminating Stream Delay (Sub-Second Latency):</strong><br>
+                        <strong style="color:#38ef7d;">2. Low Bandwidth & Flawless Mobile Streaming (No Dropouts):</strong><br>
+                        • <b>In BUTT:</b> Go to <i>Settings ➔ Audio ➔ Bitrate</i>: Select <b>64 kbps (or 48 kbps)</b> and Channel: <b>Mono</b>.<br>
+                        • <i>Why 64 kbps Mono?</i> Delivers clear gospel speech and choir music at only 8 KB/sec, ensuring listeners on 2G/3G mobile networks stream continuously with zero pauses or buffering delays!
+                    </div>
+                    <div>
+                        <strong style="color:#38bdf8;">3. Eliminating Stream Delay (Sub-Second Latency):</strong><br>
                         • <b>In BUTT:</b> Set <i>Settings ➔ Audio ➔ Buffer Size</i> to <b>100ms</b>.<br>
-                        • <b>In Icecast Server (icecast.xml):</b> Change <code>&lt;burst-size&gt;65535&lt;/burst-size&gt;</code> to <code>&lt;burst-size&gt;0&lt;/burst-size&gt;</code>.<br>
-                        • <b>In App:</b> Web engine automatically speeds up buffer drift to sync real-time edge.
+                        • <b>In Server:</b> 128KB burst buffer instantly synchronizes incoming listeners.
                     </div>
                 </div>
             </div>

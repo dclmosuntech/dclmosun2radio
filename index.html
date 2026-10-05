@@ -1761,7 +1761,7 @@
         </div>
 
         <!-- Global HTML5 Audio player instance -->
-        <audio id="global-radio-player" style="display: none;" playsinline></audio>
+        <audio id="global-radio-player" preload="auto" playsinline style="display: none;"></audio>
 
     </main>
 
@@ -1893,20 +1893,20 @@
                     <div id="pay-subview-card" style="display: flex; flex-direction: column; gap: 8px;">
                         <div class="form-group-live" style="margin-top: 0;">
                             <label style="font-size: 8.5px; font-weight: 700; color: #cbd5e1; text-transform: uppercase;">Card Number</label>
-                            <input type="text" id="pay-card-number" placeholder="4000 1234 5678 9010" value="4000 1234 5678 9010" style="margin-top: 3px; width: 100%; height: 32px; font-size: 11.5px; padding: 0 8px;">
+                            <input type="text" id="pay-card-number" placeholder="4000 1234 5678 9010" value="" style="margin-top: 3px; width: 100%; height: 32px; font-size: 11.5px; padding: 0 8px;">
                         </div>
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                             <div class="form-group-live" style="margin-top: 0;">
                                 <label style="font-size: 8.5px; font-weight: 700; color: #cbd5e1; text-transform: uppercase;">Expiry Date</label>
-                                <input type="text" id="pay-card-expiry" placeholder="12/28" value="12/28" style="margin-top: 3px; width: 100%; height: 32px; font-size: 11.5px; padding: 0 8px;">
+                                <input type="text" id="pay-card-expiry" placeholder="MM/YY" value="" style="margin-top: 3px; width: 100%; height: 32px; font-size: 11.5px; padding: 0 8px;">
                             </div>
                             <div class="form-group-live" style="margin-top: 0;">
                                 <label style="font-size: 8.5px; font-weight: 700; color: #cbd5e1; text-transform: uppercase;">CVV Code</label>
-                                <input type="password" id="pay-card-cvv" placeholder="123" value="123" style="margin-top: 3px; width: 100%; height: 32px; font-size: 11.5px; padding: 0 8px;">
+                                <input type="password" id="pay-card-cvv" placeholder="123" value="" maxlength="4" style="margin-top: 3px; width: 100%; height: 32px; font-size: 11.5px; padding: 0 8px;">
                             </div>
                         </div>
                         <button type="button" class="notebook-export-btn" id="pay-card-submit-btn" onclick="window.submitSimulatedCardPayment()" style="justify-content: center; height: 34px; margin-top: 6px; font-size: 11px; background: linear-gradient(135deg, #38ef7d, #11998e); border: none; font-weight: 700;">
-                            <i class="fa-solid fa-lock-open"></i> Complete Simulated Payment
+                            <i class="fa-solid fa-lock"></i> Authorize Seed Offering
                         </button>
                     </div>
 

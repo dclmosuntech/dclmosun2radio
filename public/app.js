@@ -24,6 +24,29 @@ window.getSyncedTime = function() {
     return Date.now() + window.clockSkew;
 };
 
+// Global HTML and Attribute Sanitization Utility to prevent XSS
+window.escapeHtml = function(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+};
+
+window.escapeJsString = function(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '\\x3C')
+        .replace(/>/g, '\\x3E');
+};
+const escapeHtml = window.escapeHtml;
+const escapeJsString = window.escapeJsString;
+
 // Automatically normalizes external storage links (Dropbox, Google Drive) to direct stream URLs
 window.getDirectMediaUrl = function(url) {
     if (!url) return url;
@@ -143,18 +166,19 @@ window.evaluateAppGatewayLock = function evaluateAppGatewayLock() {
 // Sign-up Toggle Handler Tabs Hook
 function setAuthRole(roleName) {
     window.selectedSignupRole = roleName;
+    window._currentAuthRoleSelected = roleName;
     const memberBtn = document.getElementById("role-member-btn");
     const adminBtn = document.getElementById("role-admin-btn");
     const secretField = document.getElementById("admin-secret-group");
 
     if (roleName === 'admin') {
-        adminBtn.classList.add("active");
-        memberBtn.classList.remove("active");
-        secretField.classList.add("visible");
+        if (adminBtn) adminBtn.classList.add("active");
+        if (memberBtn) memberBtn.classList.remove("active");
+        if (secretField) secretField.classList.add("visible");
     } else {
-        memberBtn.classList.add("active");
-        adminBtn.classList.remove("active");
-        secretField.classList.remove("visible");
+        if (memberBtn) memberBtn.classList.add("active");
+        if (adminBtn) adminBtn.classList.remove("active");
+        if (secretField) secretField.classList.remove("visible");
     }
 }
 
@@ -655,14 +679,16 @@ function playAudioStream(url, title, subtext, trackId = "") {
             delete player.pendingSeekTime;
             player.playbackRate = 1.0;
             const cleanUrl = url.split('?')[0];
-            const isAlreadyPlayingThisLiveStream = (player.currentPlayingTrackId === 'live' || window.currentPlayingTrackId === 'live') && player.src && player.src.includes(cleanUrl) && !player.paused;
+            const isAttachedToThisLiveStream = player.src && player.src.includes(cleanUrl);
             
-            if (!isAlreadyPlayingThisLiveStream) {
+            if (!isAttachedToThisLiveStream) {
                 const sep = url.includes('?') ? '&' : '?';
                 playUrl = `${cleanUrl}${sep}_live=${Date.now()}`;
                 player.src = playUrl;
                 player.load();
                 console.log("[Radio] Switched directly to Live Stream audio source:", playUrl);
+            } else {
+                console.log("[Radio] Resuming active Live Stream audio socket without re-buffering.");
             }
         } else {
             player.playbackRate = 1.0;
@@ -693,8 +719,10 @@ function playAudioStream(url, title, subtext, trackId = "") {
     currentPlayingTrackId = trackId;
     player.currentPlayingTrackId = trackId;
 
-    document.getElementById("current-track-title").textContent = title.toUpperCase();
-    document.getElementById("current-track-speaker").textContent = subtext;
+    const curTitleEl = document.getElementById("current-track-title");
+    const curSpeakerEl = document.getElementById("current-track-speaker");
+    if (curTitleEl) curTitleEl.textContent = title.toUpperCase();
+    if (curSpeakerEl) curSpeakerEl.textContent = subtext;
     
     // Update both Detailed Playlist Card UI and Radio UI fields if present in the DOM
     const playlistTitle = document.getElementById("playlist-track-title");
@@ -707,11 +735,12 @@ function playAudioStream(url, title, subtext, trackId = "") {
     if (radioTitle) radioTitle.textContent = title.toUpperCase();
     if (radioSpeaker) radioSpeaker.textContent = subtext;
 
-    audioBar.classList.add("visible");
+    if (audioBar) audioBar.classList.add("visible");
     isAudioPlaying = true;
     
     // Update Play Buttons Class across all visible elements
-    document.getElementById("global-play-btn").className = "fa-solid fa-pause play-btn";
+    const globalPlayBtn = document.getElementById("global-play-btn");
+    if (globalPlayBtn) globalPlayBtn.className = "fa-solid fa-pause play-btn";
     const playlistPlayBtn = document.getElementById("playlist-play-btn");
     const radioPlayBtn = document.getElementById("radio-play-btn");
     if (playlistPlayBtn) playlistPlayBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
@@ -1097,18 +1126,13 @@ function handleGridClick(featureName) {
             window.initializeLiveVideoPlayer(videoUrl);
         }
 
-        const countLabel = document.getElementById("live-viewer-count");
-        let baseViewersCount = Math.floor(Math.random() * (450 - 320 + 1)) + 320;
-        if (countLabel) countLabel.textContent = baseViewersCount;
-
-        const viewerIncrementInterval = setInterval(() => {
-            if (!document.getElementById("live-view").classList.contains("active")) {
-                clearInterval(viewerIncrementInterval);
-                return;
-            }
-            baseViewersCount += Math.floor(Math.random() * 5) - 2;
-            if (countLabel) countLabel.textContent = baseViewersCount;
-        }, 4000);
+        // Setup live viewers real-time presence
+        if (window.initializeVideoPresenceSync) {
+            window.initializeVideoPresenceSync();
+        }
+        if (window.joinVideoPresence) {
+            window.joinVideoPresence();
+        }
 
     } else if (featureName === 'Hymns & Anthems') {
         switchTab(null, 'hymns');
@@ -1142,7 +1166,8 @@ function handleGridClick(featureName) {
         const detailsPanel = document.getElementById("account-basic-details-panel");
         if (detailsPanel) detailsPanel.classList.remove("active");
         
-        document.getElementById("departments-view").classList.add("active");
+        const deptsView = document.getElementById("departments-view");
+        if (deptsView) deptsView.classList.add("active");
         if (window.refreshClientDepartments) {
             window.refreshClientDepartments();
         }
@@ -1160,7 +1185,7 @@ function handleGridClick(featureName) {
             window.refreshClientCells();
         }
     } else {
-        alert(`Opening ${featureName} view container...`);
+        console.log(`[Navigation] Selected feature: ${featureName}`);
     }
 }
 
@@ -1460,8 +1485,9 @@ window.syncPlayerWithGlobalBroadcast = function(forcePlay = false) {
 
         if (isSameSrc) {
             // Already loaded! If paused, resume synchronously right now
+            // Only seek if user was paused for a very long time (> 25s) to preserve buffer on low bandwidth
             const currentDiff = Math.abs((player.currentTime || 0) - targetSeek);
-            if (currentDiff > 3.0 && (player.readyState >= 1 || (player.duration && isFinite(player.duration)))) {
+            if (currentDiff > 25.0 && (player.readyState >= 1 || (player.duration && isFinite(player.duration)))) {
                 try {
                     player.currentTime = targetSeek;
                 } catch(e) {}
@@ -1525,7 +1551,7 @@ window.syncPlayerWithGlobalBroadcast = function(forcePlay = false) {
     }
 };
 
-// Lockstep 24/7 Virtual Radio Watchdog: ensures ALL devices stay in 100% sync smoothly
+// Lockstep 24/7 Virtual Radio Watchdog: ensures ALL devices stay in sync smoothly without audio dropouts
 if (window._radioLockstepWatchdogInterval) {
     clearInterval(window._radioLockstepWatchdogInterval);
 }
@@ -1562,16 +1588,16 @@ window._radioLockstepWatchdogInterval = setInterval(() => {
 
     const expectedTrackId = computed.track.id.toString();
 
-    // 1. If currently playing: check if track has transitioned or if audio has drifted
+    // 1. If currently playing: check if track has transitioned
     if (window.isAudioPlaying && !player.paused) {
-        // Check if track needs to change (e.g. track ended or time engine passed boundary)
+        // Track transitioned in playlist schedule: smoothly load the new track
         if (player.currentPlayingTrackId && player.currentPlayingTrackId !== expectedTrackId) {
             console.log(`[Radio Lockstep] Engine transitioned to track ${expectedTrackId}. Switching smoothly in lockstep...`);
             window.syncPlayerWithGlobalBroadcast(true);
             return;
         }
 
-        // NEVER correct drift while buffering or seeking!
+        // NEVER tamper with playback while seeking or buffering
         if (player.seeking || player.readyState < 3) {
             return;
         }
@@ -1582,26 +1608,23 @@ window._radioLockstepWatchdogInterval = setInterval(() => {
         const diff = targetSec - currentSec; // positive means player is behind, negative means ahead
         const absDiff = Math.abs(diff);
 
-        // Professional smooth clock drift correction without pops, clicks, or buffering stalls:
-        if (absDiff <= 1.2) {
-            // In sync! Normal speed
+        // Smooth subtle drift alignment WITHOUT ANY BUFFER-KILLING SEEKS:
+        // Seeking flushes the browser audio buffer, causing 15-20s buffering gaps on low-bandwidth networks!
+        // Instead, we use imperceptible playback speed micro-adjustments or let the audio play through cleanly:
+        if (absDiff <= 2.0) {
+            // Perfectly in sync! Normal speed
             if (player.playbackRate !== 1.0) player.playbackRate = 1.0;
-        } else if (absDiff <= 6.0) {
-            // Gentle catch-up / slow-down without audio drops or pops
+        } else if (absDiff <= 15.0) {
+            // Gentle alignment without audio dropouts: 1.03x if behind, 0.98x if ahead
             if (diff > 0) {
-                player.playbackRate = 1.05; // gently catch up 5% faster
+                player.playbackRate = 1.03;
             } else {
-                player.playbackRate = 0.95; // gently slow down 5%
+                player.playbackRate = 0.98;
             }
         } else {
-            // Large drift (> 6 seconds, e.g. user resumed from background tab or network pause)
-            console.log(`[Radio Lockstep] Large drift of ${absDiff.toFixed(1)}s detected. Snapping to ${targetSec.toFixed(1)}s`);
-            player.playbackRate = 1.0;
-            try {
-                player.currentTime = targetSec;
-            } catch(e) {
-                console.warn("[Radio Lockstep] Seek correction failed:", e);
-            }
+            // On low-bandwidth connections, listener may have a larger buffer cushion.
+            // DO NOT FORCE-SEEK! Keep playback at 1.0 so the audio plays continuously and solidly without break in transmission.
+            if (player.playbackRate !== 1.0) player.playbackRate = 1.0;
         }
     } else {
         // 2. Not playing: keep preloaded audio track & UI labels in lockstep so pressing Play starts instantly on the exact right track & second
@@ -1818,6 +1841,23 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (window.leaveRadioPresence) window.leaveRadioPresence();
             }
         });
+
+        // Buffering and low-bandwidth network handlers:
+        // When device is on low bandwidth, browser pauses to fill audio buffer.
+        // We do NOT stop playback state or drop the audio pipeline.
+        globalPlayer.addEventListener("waiting", () => {
+            console.log("[Audio Engine] Buffering incoming audio stream frames...");
+        });
+
+        globalPlayer.addEventListener("stalled", () => {
+            console.warn("[Audio Engine] Stream stalled (low network throughput). Waiting for buffer fill...");
+        });
+
+        globalPlayer.addEventListener("playing", () => {
+            isAudioPlaying = true;
+            window.isAudioPlaying = true;
+            if (window.syncRadioPlayButtonState) window.syncRadioPlayButtonState();
+        });
     }
 
     // Native unload / tab close presence clean-up
@@ -2023,7 +2063,7 @@ window.playVideoArchive = function(url, title, speaker) {
     player.src = url;
     player.load();
     if (titleEl) titleEl.textContent = title.toUpperCase();
-    if (speakerEl) speakerEl.innerHTML = `<i class="fa-solid fa-user-tie" style="color: #38bdf8;"></i> ${speaker}`;
+    if (speakerEl) speakerEl.innerHTML = `<i class="fa-solid fa-user-tie" style="color: #38bdf8;"></i> ${escapeHtml(speaker)}`;
 
     // Show popup modal
     modal.classList.add("active");
@@ -2178,8 +2218,8 @@ function renderSearchResultsList(items) {
                     <i class="fa-solid ${iconClass}" style="font-size: 13px;"></i>
                 </div>
                 <div style="flex: 1; overflow: hidden; min-width: 0;">
-                    <span style="font-size: 13px; font-weight: 700; color: #ffffff; display: block; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${item.title}</span>
-                    <span style="font-size: 10px; color: #94a3b8; display: block; margin-top: 2px;">${item.speaker}</span>
+                    <span style="font-size: 13px; font-weight: 700; color: #ffffff; display: block; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(item.title)}</span>
+                    <span style="font-size: 10px; color: #94a3b8; display: block; margin-top: 2px;">${escapeHtml(item.speaker)}</span>
                 </div>
                 <div style="font-size: 9.5px; font-weight: 700; color: ${typeColor}; background: rgba(${item.isHymn ? '56,189,248' : (isAudio ? '168,85,247' : '239,68,68')}, 0.1); border: 1px solid rgba(${item.isHymn ? '56,189,248' : (isAudio ? '168,85,247' : '239,68,68')}, 0.2); border-radius: 20px; padding: 3px 8px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.5px;">${typeLabel}</div>
             </div>
@@ -2187,10 +2227,9 @@ function renderSearchResultsList(items) {
     }).join('');
 }
 
-// Mini string escaping helper to prevent quotes breaks inside tags
+// String escaping helper to prevent quotes and script breaks inside tags
 function escapedString(str) {
-    if (!str) return "";
-    return str.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    return escapeJsString(str);
 }
 
 // ==========================================================================
@@ -2294,8 +2333,8 @@ window.renderLibraryTab = function() {
                         <i class="fa-solid ${icon}" style="font-size: 13px;"></i>
                     </div>
                     <div style="flex: 1; overflow: hidden; min-width: 0;">
-                        <span style="font-size: 13px; font-weight: 700; color: #ffffff; display: block; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${item.title}</span>
-                        <span style="font-size: 10px; color: #94a3b8; display: block; margin-top: 2px;">${item.speaker}</span>
+                        <span style="font-size: 13px; font-weight: 700; color: #ffffff; display: block; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(item.title)}</span>
+                        <span style="font-size: 10px; color: #94a3b8; display: block; margin-top: 2px;">${escapeHtml(item.speaker)}</span>
                     </div>
                     <div style="font-size: 9.5px; font-weight: 700; color: ${badgeColor}; background: ${badgeBg}; border: 1px solid ${badgeBorder}; border-radius: 20px; padding: 3px 8px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.5px;">${badge}</div>
                 </div>
@@ -2309,8 +2348,8 @@ window.renderLibraryTab = function() {
                         <i class="fa-solid fa-video" style="font-size: 13px;"></i>
                     </div>
                     <div style="flex: 1; overflow: hidden; min-width: 0;">
-                        <span style="font-size: 13px; font-weight: 700; color: #ffffff; display: block; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${item.title}</span>
-                        <span style="font-size: 10px; color: #94a3b8; display: block; margin-top: 2px;">${item.speaker}</span>
+                        <span style="font-size: 13px; font-weight: 700; color: #ffffff; display: block; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(item.title)}</span>
+                        <span style="font-size: 10px; color: #94a3b8; display: block; margin-top: 2px;">${escapeHtml(item.speaker)}</span>
                     </div>
                     <div style="font-size: 9.5px; font-weight: 700; color: #ef4444; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 20px; padding: 3px 8px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.5px;">Watch</div>
                 </div>
@@ -2324,8 +2363,8 @@ window.renderLibraryTab = function() {
                         <i class="fa-solid fa-file-pdf" style="font-size: 13px;"></i>
                     </div>
                     <div style="flex: 1; overflow: hidden; min-width: 0;">
-                        <span style="font-size: 13px; font-weight: 700; color: #ffffff; display: block; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${item.title}</span>
-                        <span style="font-size: 10px; color: #94a3b8; display: block; margin-top: 2px;">By ${item.author || 'DCLM Pulpit'}</span>
+                        <span style="font-size: 13px; font-weight: 700; color: #ffffff; display: block; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(item.title)}</span>
+                        <span style="font-size: 10px; color: #94a3b8; display: block; margin-top: 2px;">By ${escapeHtml(item.author || 'DCLM Pulpit')}</span>
                     </div>
                     <div style="font-size: 9.5px; font-weight: 700; color: #38bdf8; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 20px; padding: 3px 8px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.5px;">Study</div>
                 </div>
@@ -2359,7 +2398,7 @@ window.openOutlineResource = function(url, title, author) {
     }
 
     if (titleEl) titleEl.textContent = title.toUpperCase();
-    if (authorEl) authorEl.innerHTML = `<i class="fa-solid fa-user-tie" style="color: #38bdf8;"></i> ${author}`;
+    if (authorEl) authorEl.innerHTML = `<i class="fa-solid fa-user-tie" style="color: #38bdf8;"></i> ${escapeHtml(author)}`;
 
     // Configure link URLs
     if (readBtn) readBtn.href = url;
@@ -2943,4 +2982,230 @@ window.handleCellsSearch = function(query) {
             card.style.display = "none";
         }
     });
+};
+
+// ============================================================
+// DYNAMIC CLIENT UI RENDERERS (Departments, Cells, Support, Giving)
+// ============================================================
+
+window.refreshClientDepartments = function() {
+    const container = document.getElementById("departments-results-container");
+    if (!container) return;
+
+    const depts = window._cachedDepartments || [];
+    const apps = window._cachedApplications || [];
+
+    if (depts.length === 0) {
+        container.innerHTML = `
+            <div style="grid-column: 1 / -1; text-align: center; padding: 40px 20px; color: #94a3b8;">
+                <i class="fa-solid fa-people-roof" style="font-size: 32px; color: #475569; margin-bottom: 12px; display: block;"></i>
+                <p style="margin: 0; font-size: 13px;">Loading workforce departments catalog...</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = depts.map(dept => {
+        const myApp = apps.find(a => a.departmentId === dept.id || a.departmentId?.toString() === dept.id?.toString());
+        let badgeHtml = '';
+        if (myApp) {
+            const statusColor = myApp.status === 'approved' ? '#38ef7d' : (myApp.status === 'rejected' ? '#ef4444' : '#f59e0b');
+            badgeHtml = `<span style="font-size: 9px; font-weight: 800; color: ${statusColor}; background: rgba(255,255,255,0.08); padding: 3px 8px; border-radius: 20px; text-transform: uppercase;">Status: ${escapeHtml(myApp.status)}</span>`;
+        }
+
+        const iconClass = dept.icon || 'fa-people-group';
+        const deptColor = dept.color || '#38ef7d';
+
+        return `
+            <div class="dept-card-wrapper" data-name="${escapeHtml(dept.name || '')}" data-desc="${escapeHtml(dept.description || '')}" style="background: rgba(13, 27, 42, 0.7); border: 1px solid rgba(255,255,255,0.07); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; transition: transform 0.2s ease, border-color 0.2s ease;">
+                <div>
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 8px;">
+                        <div style="width: 38px; height: 38px; border-radius: 10px; background: rgba(56, 239, 125, 0.1); border: 1px solid rgba(56, 239, 125, 0.2); display: flex; align-items: center; justify-content: center; color: #38ef7d; font-size: 16px; flex-shrink: 0;">
+                            <i class="fa-solid ${escapeHtml(iconClass)}"></i>
+                        </div>
+                        ${badgeHtml}
+                    </div>
+                    <h3 style="font-size: 14px; font-weight: 800; color: #ffffff; margin: 0 0 4px 0; line-height: 1.3;">${escapeHtml(dept.name)}</h3>
+                    <p style="font-size: 11px; color: #94a3b8; margin: 0 0 10px 0; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">${escapeHtml(dept.description || '')}</p>
+                    
+                    <div style="font-size: 10.5px; color: #cbd5e1; display: flex; flex-direction: column; gap: 3px;">
+                        <div><strong style="color: #64748b;"><i class="fa-solid fa-user-tie" style="color: #38bdf8;"></i> Head:</strong> ${escapeHtml(dept.leaderName || 'To Be Appointed')}</div>
+                        <div><strong style="color: #64748b;"><i class="fa-solid fa-calendar-day" style="color: #fb923c;"></i> Meeting:</strong> ${escapeHtml(dept.meetingSchedule || 'Saturdays @ 5:00 PM')}</div>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 8px; margin-top: 4px;">
+                    <button type="button" onclick="window.openDeptDetailsModal('${escapeJsString(dept.id)}')" style="flex: 1; height: 32px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: #ffffff; font-size: 11px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
+                        <i class="fa-solid fa-circle-info"></i> Details
+                    </button>
+                    ${myApp ? `
+                        <button type="button" onclick="window.openUnitDashboard('${escapeJsString(dept.id)}')" style="flex: 1; height: 32px; background: linear-gradient(135deg, #38bdf8, #0284c7); border: none; border-radius: 8px; color: #ffffff; font-size: 11px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
+                            <i class="fa-solid fa-comments"></i> Desk
+                        </button>
+                    ` : `
+                        <button type="button" onclick="window.openDeptApplyModal('${escapeJsString(dept.id)}', '${escapeJsString(dept.name)}')" style="flex: 1; height: 32px; background: linear-gradient(135deg, #a855f7, #7c3aed); border: none; border-radius: 8px; color: #ffffff; font-size: 11px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
+                            <i class="fa-solid fa-user-plus"></i> Join
+                        </button>
+                    `}
+                </div>
+            </div>
+        `;
+    }).join('');
+};
+
+window.refreshClientCells = function() {
+    const container = document.getElementById("cells-results-container");
+    if (!container) return;
+
+    const cells = window._cachedCells || [];
+
+    if (cells.length === 0) {
+        container.innerHTML = `
+            <div style="grid-column: 1 / -1; text-align: center; padding: 40px 20px; color: #94a3b8;">
+                <i class="fa-solid fa-location-dot" style="font-size: 32px; color: #475569; margin-bottom: 12px; display: block;"></i>
+                <p style="margin: 0; font-size: 13px;">Loading cell fellowships locator...</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = cells.map(cell => {
+        const mapQuery = (cell.latitude && cell.longitude) 
+            ? `${cell.latitude},${cell.longitude}` 
+            : encodeURIComponent(cell.address || cell.name);
+        const mapUrl = `https://www.google.com/maps/search/?api=1&query=${mapQuery}`;
+
+        return `
+            <div class="cell-card-wrapper" data-name="${escapeHtml(cell.name || '')}" data-address="${escapeHtml(cell.address || '')}" data-region="${escapeHtml(cell.region || '')}" style="background: rgba(13, 27, 42, 0.7); border: 1px solid rgba(255,255,255,0.07); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px;">
+                <div>
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 8px;">
+                        <span style="font-size: 9.5px; font-weight: 800; color: #fb923c; background: rgba(251, 146, 60, 0.1); border: 1px solid rgba(251, 146, 60, 0.2); border-radius: 20px; padding: 3px 8px; text-transform: uppercase;">${escapeHtml(cell.region || 'Osun II')}</span>
+                        <a href="${mapUrl}" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; font-size: 13px; text-decoration: none;" title="Open in Maps">
+                            <i class="fa-solid fa-diamond-turn-right"></i>
+                        </a>
+                    </div>
+                    <h3 style="font-size: 14px; font-weight: 800; color: #ffffff; margin: 0 0 6px 0; line-height: 1.3;">${escapeHtml(cell.name)}</h3>
+                    <p style="font-size: 11px; color: #94a3b8; margin: 0 0 10px 0; line-height: 1.4;"><i class="fa-solid fa-location-dot" style="color: #fb923c; margin-right: 4px;"></i> ${escapeHtml(cell.address || 'Address on file with regional headquarters')}</p>
+                    
+                    <div style="font-size: 10.5px; color: #cbd5e1; display: flex; flex-direction: column; gap: 3px;">
+                        <div><strong style="color: #64748b;"><i class="fa-solid fa-user" style="color: #38bdf8;"></i> Center Leader:</strong> ${escapeHtml(cell.leaderName || 'Center Minister')}</div>
+                        ${cell.leaderPhone ? `<div><strong style="color: #64748b;"><i class="fa-solid fa-phone" style="color: #38ef7d;"></i> Contact:</strong> <a href="tel:${escapeHtml(cell.leaderPhone)}" style="color: #38ef7d; text-decoration: none;">${escapeHtml(cell.leaderPhone)}</a></div>` : ''}
+                        <div><strong style="color: #64748b;"><i class="fa-solid fa-clock" style="color: #fb923c;"></i> Schedule:</strong> ${escapeHtml(cell.meetingSchedule || 'Sundays @ 5:00 PM')}</div>
+                    </div>
+                </div>
+
+                <a href="${mapUrl}" target="_blank" rel="noopener noreferrer" style="height: 32px; background: rgba(251, 146, 60, 0.1); border: 1px solid rgba(251, 146, 60, 0.25); border-radius: 8px; color: #fb923c; font-size: 11px; font-weight: 700; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 4px;">
+                    <i class="fa-solid fa-map-location-dot"></i> Get Center Directions
+                </a>
+            </div>
+        `;
+    }).join('');
+};
+
+window.refreshClientSupportTimeline = function() {
+    const container = document.getElementById("support-tickets-history");
+    if (!container) return;
+
+    const tickets = window._mySupportTickets || [];
+    if (tickets.length === 0) {
+        container.innerHTML = '<p style="font-size: 10px; color: #64748b; text-align: center; margin: 12px 0;">No support inquiries submitted yet.</p>';
+        return;
+    }
+
+    container.innerHTML = tickets.map(t => {
+        const timeStr = new Date(t.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const badgeColor = t.status === 'resolved' ? '#38ef7d' : '#f59e0b';
+        const badgeBg = t.status === 'resolved' ? 'rgba(56, 239, 125, 0.15)' : 'rgba(245, 158, 11, 0.15)';
+        const statusLabel = t.status === 'resolved' ? 'Resolved' : 'Under Review';
+
+        return `
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 11px; font-weight: 700; color: #ffffff;">${escapeHtml(t.issueType || 'General Inquiry')}</span>
+                    <span style="font-size: 8.5px; font-weight: 800; color: ${badgeColor}; background: ${badgeBg}; padding: 2px 6px; border-radius: 4px; text-transform: uppercase;">${statusLabel}</span>
+                </div>
+                <p style="font-size: 10.5px; color: #cbd5e1; margin: 0; line-height: 1.3;">${escapeHtml(t.details || '')}</p>
+                ${t.reply ? `
+                    <div style="margin-top: 4px; background: rgba(56, 189, 248, 0.08); border-left: 2px solid #38bdf8; padding: 4px 6px; border-radius: 4px;">
+                        <span style="font-size: 9px; font-weight: 700; color: #38bdf8; display: block;">Response from HQ Desk:</span>
+                        <p style="font-size: 10px; color: #e2e8f0; margin: 0;">${escapeHtml(t.reply)}</p>
+                    </div>
+                ` : ''}
+                <span style="font-size: 8.5px; color: #64748b; margin-top: 2px;">${timeStr}</span>
+            </div>
+        `;
+    }).join('');
+};
+
+window.refreshClientGivingTimeline = function() {
+    const container = document.getElementById("giving-tickets-history");
+    if (!container) return;
+
+    const txs = window._myGivingTransactions || [];
+    if (txs.length === 0) {
+        container.innerHTML = '<p style="font-size: 10px; color: #64748b; text-align: center; margin: 12px 0;">No contributions logged yet.</p>';
+        return;
+    }
+
+    container.innerHTML = txs.map(t => {
+        const timeStr = new Date(t.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+        const formattedAmt = typeof t.amount === 'number' ? `₦${t.amount.toLocaleString()}` : (t.amount || '₦0');
+
+        return `
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+                <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+                    <span style="font-size: 11px; font-weight: 700; color: #ffffff;">${escapeHtml(t.type || t.category || 'Tithe & Offering')}</span>
+                    <span style="font-size: 8.5px; color: #94a3b8;">${timeStr}</span>
+                </div>
+                <div style="text-align: right; flex-shrink: 0;">
+                    <span style="font-size: 12px; font-weight: 800; color: #38ef7d; display: block;">${escapeHtml(formattedAmt)}</span>
+                    <span style="font-size: 8px; font-weight: 700; color: #38ef7d; text-transform: uppercase;">Completed</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+};
+
+window.submitSimulatedCardPayment = async function() {
+    const btn = document.getElementById("pay-card-submit-btn");
+    const amountInput = document.getElementById("giving-amount-input");
+    const amount = parseInt(amountInput ? amountInput.value : 1000) || 1000;
+    const categorySelect = document.getElementById("giving-category-select");
+    const category = categorySelect ? categorySelect.value : "Tithe";
+
+    if (btn) {
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processing Secure Seed...';
+        btn.disabled = true;
+    }
+
+    try {
+        if (window.submitGivingRecord) {
+            await window.submitGivingRecord({
+                amount: amount,
+                type: category,
+                category: category,
+                paymentMethod: 'card',
+                status: 'completed',
+                created_at: new Date().toISOString()
+            });
+        }
+
+        setTimeout(() => {
+            const checkoutScreen = document.getElementById("giving-checkout-screen");
+            const successScreen = document.getElementById("giving-success-screen");
+            if (checkoutScreen) checkoutScreen.style.display = "none";
+            if (successScreen) successScreen.style.display = "flex";
+            if (btn) {
+                btn.innerHTML = '<i class="fa-solid fa-lock"></i> Authorize Seed Offering';
+                btn.disabled = false;
+            }
+            if (window.refreshClientGivingTimeline) window.refreshClientGivingTimeline();
+        }, 1200);
+    } catch (err) {
+        console.warn("[Giving] Simulated payment notice:", err);
+        if (btn) {
+            btn.innerHTML = '<i class="fa-solid fa-lock"></i> Authorize Seed Offering';
+            btn.disabled = false;
+        }
+    }
 };
